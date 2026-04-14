@@ -466,7 +466,7 @@ def run_complex_field_test():
     # Run the GIF Renderer and capture the history returned
     history = animate_double_slit_evolution(
         generator_cm, topology_cm, global_field_cm,
-        initial_states, initial_fields, total_steps=80, save_dir=save_directory
+        initial_states, initial_fields, total_steps=30, save_dir=save_directory
     )
 
     # Save the Final Static Plot from the last frame of history
