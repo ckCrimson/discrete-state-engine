@@ -86,7 +86,7 @@ Because the engine abstracts states into pure vector encodings and links them vi
 * **Quantitative Finance:** Stochastic modeling for exotic option pricing grids.
 * **Artificial Intelligence:** Markov Decision Process (MDP) solver for reinforcement learning state-spaces.
 
-![Quantum Evolution](assets/quantum_evolution.gif)
+![Quantum Evolution](particle_grid_simulator/test/generator/plot/quantum_evolution.gif)
 
 ## 6. Quick Start API
 Despite the rigid architectural transformations under the hood, initializing the pipeline remains highly declarative at the top level.
