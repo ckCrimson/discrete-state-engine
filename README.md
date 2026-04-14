@@ -63,7 +63,7 @@ The physical structure of the repository is divided into discrete modules. Each 
 * **`/src/state`:** Defines the mathematical entities. Translates generic state abstractions into contiguous state-value arrays.
 * **`/src/topology`:** Defines the spatial grid. Translates generic node-edge connections into hardware-friendly Compressed Sparse Row (CSR) matrices.
 * **`/src/field`:** Defines the complex algebra. Translates mapping rules into pre-allocated memory buffers.
-* **`/src/generator`:** The master orchestrator. 
+* **`/src/generator`:** Uses the generic chain rule to build the fields over multiple possible paths. It used the field algebra and its operation to build the field over multiple steps and get the probability
 
 ### Inter-Module Communication
 To prevent isolated silos, the architecture relies on a strict communication protocol:
