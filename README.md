@@ -78,7 +78,7 @@ When benchmarked on a 3-fold recurrent topology processing >10,000 unique states
 * **Dual-Flow Engine Execution:** 0.010 seconds
 * **Result:** **>105x Performance Speedup.**
 
-![Scaling Benchmark](assets/scaling_benchmark.png)
+![Scaling Benchmark](particle_grid_simulator/test/generator/plot/scaling_benchmark.png)
 
 ## 5. Applications
 Because the engine abstracts states into pure vector encodings and links them via Markovian rules, it acts as a generalized solver for highly complex systems:
