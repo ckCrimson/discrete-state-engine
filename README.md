@@ -1,90 +1,102 @@
 # Discrete State Engine (DSE)
 
-A high-performance, Data-Oriented Design (DOD) framework for solving massive Markovian state-spaces, discrete-time quantum walks, and lattice field dynamics.
+A high-performance framework for solving massive Markovian state-spaces, discrete-time quantum walks, and lattice field dynamics.
 
-## 1. The Origin: Generic Flexibility vs. Bare-Metal Efficiency
+## 1. The Philosophy: Generic Structure vs. Hardware Efficiency
 Building a highly specialized, hardcoded simulator is easy. Building a generic, abstract framework is also relatively easy. Building a generic framework that actually executes at bare-metal speeds is an immense engineering challenge.
 
-This project was born from that exact hardship. When tracking tens of thousands of unique mathematical states and complex transition rules, standard high-level Object-Oriented (OOP) implementations choke on memory allocation overhead and CPU cache misses. The **Discrete State Engine (DSE)** solves this von Neumann bottleneck by strictly separating the *definition* of the physics from the *execution* of the math. 
+This project was born from the hardship of maintaining a completely generalized structure without sacrificing runtime efficiency. Standard high-level Object-Oriented (OOP) implementations allow for beautiful abstractions but execute poorly on hardware due to memory fragmentation and cache misses. The **Discrete State Engine (DSE)** solves this by utilizing an architecture that transforms generic domain concepts into hardware-friendly, memory-localized data structures before execution.
 
-## 2. The Dual-Flow Architecture
-To achieve generic flexibility alongside high-speed execution, this engine utilizes a Dual-Flow architecture. Users define the rules in high-level Python, and the engine's Bridge translates them into a completely stateless, Data-Oriented Component System for JIT-compiled execution.
+## 2. The Architecture: The Dual-Flow Pattern
+Architecture is not defined by the project's folders, but by the flow of data. Every system within this engine adheres to a strict "Dual-Flow" architectural pattern, bridged by a Transformation Layer and orchestrated via shared inter-module communication.
+
+1. **The Domain Layer (Generic Structure):** High-level, flexible Python OOP. This layer focuses entirely on abstract definitions—what a state is, how a topology is linked, or what the mathematical algebra dictates.
+2. **The Transformation Layer:** The bridging mechanism. Translators intercept the generic domain data, strip away all OOP overhead, and map the abstractions into numerical indices and vector encodings.
+3. **The Hardware-Friendly Layer:** Pure, contiguous arrays prioritizing memory locality. This layer is completely agnostic to the domain abstractions; it only understands matrix math and vector operations, making it highly optimized for hardware execution (bypassing the GIL).
 
 ```mermaid
 graph TD
-    %% Domain Layer
-    subgraph Domain Layer [1. The Domain: High-Level Python OOP]
-        A1[State Definitions]
-        A2[Topology Generators]
-        A3[Field Algebra & Mappers]
+    %% EXTERNAL WORLD
+    User([Outside World / Systems]) -->|Public API| CM
+
+    %% THE ORCHESTRATOR
+    subgraph CM [Component Manager: Stateless Orchestrator]
+        direction TB
+        API[Public API Contract]
+        CBuf[Command Buffer: Structural Mutations]
+        
+        subgraph Internal_Pillars [The Dual-Flow Transformation]
+            P1[Pillar 1: Domain Logic]
+            P2[Pillar 2: Translators]
+            P3[Pillar 3: Execution Logic]
+        end
+        
+        API --> Internal_Pillars
+        P1 & P2 & P3 --> CBuf
     end
 
-    %% The Bridge
-    subgraph The Bridge [2. The Bridge: Translation]
-        B1[Translators]
+    %% INTER-MODULE CONTRACT
+    CM <--> Bridge{The Bridge: Data Contract}
+    Bridge <--> StaticCM[Static Utility CM <br/> Specialized Constructor / Static API]
+
+    %% THE STORE
+    subgraph Store [Component Store: Pure State Container]
+        Sync{SyncState Manager}
+        D_Data[Domain Data: OOP/Graphs]
+        Meta[Metadata: Translation Schema]
+        E_Data[Execution Data: Hardware-Friendly Arrays]
+        
+        Sync --> D_Data <--> Meta <--> E_Data
     end
 
-    %% Execution Layer
-    subgraph Execution Layer [3. The Execution: Data-Oriented Design]
-        C1{Component Managers}
-        C2[(Storage: Contiguous C-Arrays)]
-        C3[CS: Compressed Sparse Graph]
-        C4[[Utility: Numba JIT Kernels]]
+    %% EXECUTION PIPELINE
+    subgraph Execution [Hardware Execution Layer]
+        CBuf -->|Mutations| Sync
+        E_Data -->|Memory Refs| Strategy[IExecutionStrategy]
+        Strategy --> Kernels[[Numba JIT Kernels / Ops]]
     end
-
-    %% Final Output
-    Z((Hardware-Level <br/> State Evolution))
-
-    %% Data Flow
-    A1 & A2 & A3 -->|Abstract Rules & OOP Logic| B1
-    B1 -->|Strip Objects & Extract Vector Encodings| C1
-    
-    C1 -->|Allocate Max Cache Locality| C2
-    C1 -->|Map Transition Edges| C3
-    C1 -->|Orchestrate Pipeline| C4
-    
-    C2 -->|Raw Data| C4
-    C3 -->|Topology Weights| C4
-    
-    C4 -->|Bypass Python GIL| Z
 ```
 
-### The Component Pipeline:
-* **The Domain:** Pure Python API for defining the physical algebra and Markovian rules.
-* **The Translators:** Intercepts the domain rules, stripping away all high-level objects to map them into pure vector encodings.
-* **Storage:** Manages the contiguous 1D/2D memory buffers to maximize L1/L2 cache locality.
-* **CS (Compressed Sparse):** Structures the transition probabilities into sparse row matrices to prevent memory bloat in highly interconnected topologies.
-* **Component Managers (CM):** The orchestrators that route data between Storage, CS, and Utility.
-* **Utility:** The pure, pre-compiled Numba C-kernels that execute the matrix operations.
+## 3. The Project Structure: Implementation of the Architecture
+The physical structure of the repository is divided into discrete modules. Each module independently implements the Dual-Flow architecture to handle its specific domain responsibility before communicating with the master orchestrator.
 
-## 3. The Proof: Scaling Benchmark
-By bypassing Python's Global Interpreter Lock (GIL) and maximizing CPU cache locality, the DOD architecture scales linearly against exponential state growth.
+* **`/src/state`:** Defines the mathematical entities. Translates generic state abstractions into contiguous state-value arrays.
+* **`/src/topology`:** Defines the spatial grid. Translates generic node-edge connections into hardware-friendly Compressed Sparse Row (CSR) matrices.
+* **`/src/field`:** Defines the complex algebra. Translates mapping rules into pre-allocated memory buffers.
+* **`/src/generator`:** The master orchestrator. 
+
+### Inter-Module Communication
+To prevent isolated silos, the architecture relies on a strict communication protocol:
+* **Data Bridges:** Modules do not pass OOP objects to one another. They communicate strictly through Data Bridges that pass the transformed, hardware-friendly arrays.
+* **Static Utility Component Manager:** Instead of duplicating execution logic, modules route their localized data arrays to a shared Static Utility Component Manager, which handles the overarching orchestration and hardware execution of the kernels for the Generator.
+
+## 4. The Proof: Execution Benchmark
+By isolating the OOP abstractions and executing solely on the hardware-friendly array layer, the architecture achieves massive scalability.
 
 When benchmarked on a 3-fold recurrent topology processing >10,000 unique states and 31,000 transition edges per step:
-* **Standard Domain Implementation:** 1.097 seconds
-* **DOD Engine Execution:** 0.010 seconds
+* **Standard Generic OOP Implementation:** 1.097 seconds
+* **Dual-Flow Engine Execution:** 0.010 seconds
 * **Result:** **>105x Performance Speedup.**
 
 ![Scaling Benchmark](assets/scaling_benchmark.png)
 
-## 4. Applications: Vector Encoding & Markovian Rules
-Because the engine abstracts "States" into pure mathematical indices and links them via generic Markovian chain rules, it acts as a generalized solver for highly complex systems:
-
-* **Quantum Mechanics:** Simulates discrete path integrals, 4D Grover coins, and Laplacian wave interference acting as open thermodynamic systems.
-* **Quantitative Finance:** High-speed stochastic modeling for exotic option pricing grids.
-* **Artificial Intelligence:** Blazing-fast Markov Decision Process (MDP) solver for reinforcement learning state-spaces.
+## 5. Applications
+Because the engine abstracts states into pure vector encodings and links them via Markovian rules, it acts as a generalized solver for highly complex systems:
+* **Quantum Mechanics:** Simulates discrete path integrals, 4D Grover coins, and Laplacian wave interference.
+* **Quantitative Finance:** Stochastic modeling for exotic option pricing grids.
+* **Artificial Intelligence:** Markov Decision Process (MDP) solver for reinforcement learning state-spaces.
 
 ![Quantum Evolution](assets/quantum_evolution.gif)
 
-## 5. API Design: The Developer Experience
-Despite the C-level performance under the hood, initializing complex topologies and rule sets takes only a few lines of clean Python.
+## 6. Quick Start API
+Despite the rigid architectural transformations under the hood, initializing the pipeline remains highly declarative at the top level.
 
 ```python
-# 1. Define the Generic Algebra and Field Mapper
+# 1. Define the Generic Domain Structure
 algebra = FieldAlgebra(dimensions=2, dtype=np.complex128)
 mapper = FieldMapper(algebra=algebra, state_class_ref=State)
 
-# 2. Configure the Generic Markovian Rules
+# 2. Configure the Generator Rules
 gen_data = GenericMarkovianFieldGeneratorData(
     mapper=mapper, 
     topology=topology_domain, 
@@ -92,6 +104,6 @@ gen_data = GenericMarkovianFieldGeneratorData(
     maximum_step_baking=100
 )
 
-# 3. Execute the Numba DOD Pipeline
+# 3. Execute the Transformation & Hardware-Friendly Pipeline
 generator_cm.generate_steps(steps=100)
 ```
