@@ -1,11 +1,8 @@
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from abc import abstractmethod
 
 import numpy as np
-from typing import Any, Tuple, Callable
-
-from hpc_ecs_core.src.hpc_ecs_core.interfaces import IKernelStorage, KernelDataContract
-from particle_grid_simulator.src.generator.domain.interfaces.field_generator import IFieldGeneratorData
+from typing import  Callable
+from hpc_ecs_core.src.hpc_ecs_core.interfaces import IKernelStorage
 
 from dataclasses import dataclass
 from typing import Any
@@ -138,6 +135,15 @@ class IGeneratorKernelStorage(IKernelStorage):
     @abstractmethod
     def buffer_B_fields(self) -> np.ndarray: pass
 
+    @abstractmethod
+    def clear(self) -> None:
+        """
+        DOD MEMORY WIPE:
+        Zeros out the active counts and owned Ping-Pong buffers
+        without returning memory to the OS.
+        """
+        pass
+
 
 class ICSRGeneratorStorage(IGeneratorKernelStorage):
     """
@@ -177,3 +183,61 @@ class ICSRGeneratorStorage(IGeneratorKernelStorage):
     @property
     @abstractmethod
     def global_normalized_fields(self) -> np.ndarray: pass
+
+
+
+# --- Import your base classes here ---
+# from particle_grid_simulator... import GeneratorKernelDataContract, ICSRGeneratorStorage
+
+@dataclass(frozen=True)
+class ParallelGeneratorDataContract(GeneratorKernelDataContract):
+    """
+    Extends the strict memory blueprint to include the N-lane dimension.
+    """
+    max_particles: int
+
+@dataclass
+class ParallelGeneratorFastRef:
+    """
+    The DOD Memory Arena for N-Parallel execution.
+    Notice that counts are now 1D arrays, and states/fields are 3D.
+    """
+    # --- ACTIVE STATE (3D: [Particle][State][Dimension]) ---
+    buffer_A_states: np.ndarray
+    buffer_A_fields: np.ndarray
+    buffer_B_states: np.ndarray
+    buffer_B_fields: np.ndarray
+
+    # --- ACTIVE COUNTS (1D: [Particle]) ---
+    active_counts_A: np.ndarray
+    active_counts_B: np.ndarray
+
+    # --- TOPOLOGY ENVIRONMENT (Shared Read-Only CSR Arrays) ---
+    state_coordinates: np.ndarray
+    edge_offsets: np.ndarray
+    edge_targets: np.ndarray
+
+    # --- GLOBAL FIELD ENVIRONMENT (Shared Read-Only) ---
+    global_states: np.ndarray
+    global_fields: np.ndarray
+    global_normalized_fields: np.ndarray
+
+    # --- THE DOD FIX: PRE-ALLOCATED THREAD SCRATCHPADS ---
+    # These prevent Numba from dynamically allocating memory inside the prange loop
+    scratchpad_acc_fields: np.ndarray  # 3D: [Particle][CSR_Node][Dimension]
+    scratchpad_seen_nodes: np.ndarray  # 2D: [Particle][CSR_Node]
+
+    math_multiply: Callable = None
+    math_norm: Callable = None
+
+
+
+class IParallelGeneratorKernelStorage(ICSRGeneratorStorage):
+    """
+    CONTRACT: Hardware memory layout for N-Lane parallel execution.
+    """
+    @property
+    @abstractmethod
+    def parallel_fast_refs(self) -> 'ParallelGeneratorFastRef':
+        """Strongly typed FastRef for the Parallel Generator."""
+        pass

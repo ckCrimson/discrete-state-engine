@@ -26,12 +26,9 @@ def _find_coord_id(target_vec: np.ndarray, array_to_search: np.ndarray) -> int:
 _KERNEL_CACHE = {}
 
 
-def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func):
-    """
-    FACTORY PATTERN: Bakes the specific math functions directly into the compiled assembly.
-    This eliminates 'Function Pointer' dynamic dispatch overhead completely.
-    """
-    cache_key = (id(math_multiply), id(math_norm), id(transition_func))
+def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field_dtype):
+    # FIX: Cache key now includes dtype to prevent Real/Complex collisions
+    cache_key = (id(math_multiply), id(math_norm), id(transition_func), str(field_dtype))
     if cache_key in _KERNEL_CACHE:
         return _KERNEL_CACHE[cache_key]
 
@@ -61,19 +58,26 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func):
             read_ids[i] = _find_coord_id(read_states[i], state_coords)
 
         # ---------------------------------------------------------
-        # PRE-ALLOCATION: Allocate RAM exactly ONCE before the loop.
+        # PRE-ALLOCATION: Uses the passed-in field_dtype (complex128)
         # ---------------------------------------------------------
-        acc_fields = np.zeros((num_csr_nodes, field_dim), dtype=read_fields.dtype)
-        seen_nodes = np.zeros(num_csr_nodes, dtype=np.bool_)
+        # Inside _compiled_loop
+        # ---------------------------------------------------------
+        # PRE-ALLOCATION: Inherit type directly from the buffer
+        # ---------------------------------------------------------
+        acc_fields = np.zeros((num_csr_nodes, field_dim), dtype=buf_A_fields.dtype)
+        seen_nodes = np.zeros(num_csr_nodes, dtype=nb.boolean)
 
         for step in range(steps):
+            # FAST SPARSE CLEAR:
+            # Use 0 * read_fields[0,0] to ensure the 'Zero' is the correct type
+            # (Complex Zero vs Float Zero) without hardcoding.
+            zero_val = read_fields[0, 0] * 0
 
-            # FAST SPARSE CLEAR: Only zero out the memory we touched in the last step!
             for i in range(num_csr_nodes):
                 if seen_nodes[i]:
                     seen_nodes[i] = False
                     for d in range(field_dim):
-                        acc_fields[i, d] = 0.0
+                        acc_fields[i, d] = zero_val
 
             for i in range(current_active_count):
                 state_id = read_ids[i]
@@ -91,7 +95,6 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func):
                     s_j = state_coords[state_id]
                     s_i = state_coords[target_state_id]
 
-                    # Numba successfully inlines these because of the Factory pattern
                     t_weight = transition_func(s_j, s_i)
                     env_field = math_multiply(field_i, target_global_field)
                     propagated_field = math_multiply(env_field, t_weight)
@@ -99,6 +102,7 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func):
                     if do_implicit_norm:
                         mag_sq = 0.0
                         for d in range(field_dim):
+                            # Explicit Born Rule calculation
                             mag_sq += propagated_field[d].real ** 2 + propagated_field[d].imag ** 2
                         n_val = np.sqrt(mag_sq)
 
@@ -156,7 +160,8 @@ class GenericGeneratorKernelUtility(IGeneratorKernelUtility):
         compiled_kernel = get_compiled_ping_pong_loop(
             math_multiply=fast_refs.math_multiply,
             math_norm=fast_refs.math_norm,
-            transition_func=transition_func
+            transition_func=transition_func,
+            field_dtype=fast_refs.buffer_A_fields.dtype
         )
 
         final_count = compiled_kernel(
@@ -177,19 +182,13 @@ class GenericGeneratorKernelUtility(IGeneratorKernelUtility):
 
         final_buffer_flag = 'A' if steps % 2 == 0 else 'B'
 
-        # =========================================================
-        # THE FIX: GUARANTEE BUFFER 'A' IS ALWAYS READY FOR THE NEXT CALL
-        # =========================================================
         if final_buffer_flag == 'A':
             fast_refs.active_count_A = final_count
             fast_refs.active_count_B = 0
         else:
-            # Swap the underlying numpy array pointers directly in memory
             fast_refs.buffer_A_states, fast_refs.buffer_B_states = fast_refs.buffer_B_states, fast_refs.buffer_A_states
             fast_refs.buffer_A_fields, fast_refs.buffer_B_fields = fast_refs.buffer_B_fields, fast_refs.buffer_A_fields
-
             fast_refs.active_count_A = final_count
             fast_refs.active_count_B = 0
 
-        # We always return 'A' because we forced the winning data into Buffer A
         return 'A'

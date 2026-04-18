@@ -6,7 +6,6 @@ from typing import Iterable, Callable, Any
 
 from particle_grid_simulator.src.topology.interfaces.utility import ITopologyUtility
 
-
 # ==========================================
 # FAST PATH: MULTI-STEP FRONTIER KERNEL
 # ==========================================
@@ -21,7 +20,6 @@ def _njit_ping_pong_frontier(
         buffer_b: List,
         seen_array: np.ndarray
 ):
-    """Calculates the exact reachable states at Step N. Returns list of handle indices."""
     buffer_a.clear()
     buffer_a.append(np.int32(start_idx))
 
@@ -46,7 +44,6 @@ def _njit_ping_pong_frontier(
 
     return buffer_a
 
-
 # ==========================================
 # FAST PATH: MULTI-STEP BASIN KERNEL
 # ==========================================
@@ -61,7 +58,6 @@ def _njit_ping_pong_basin(
         buffer_b: List,
         seen_array: np.ndarray
 ):
-    """Calculates ALL states reachable up to Step N. Returns list of handle indices."""
     buffer_a.clear()
     buffer_a.append(np.int32(start_idx))
 
@@ -92,9 +88,6 @@ def _njit_ping_pong_basin(
 
     return basin_out
 
-
-
-
 class NumbaTopologyUtility(ITopologyUtility):
     """
     STATELESS UTILITY: Purely functional graph execution.
@@ -123,9 +116,8 @@ class NumbaTopologyUtility(ITopologyUtility):
         if fast_ref.steps_prepared >= target_steps:
             return start_idx
 
-        # O(1) Integer Queue
         current_frontier = List.empty_list(numba.types.int32)
-        current_frontier.append(np.int32(start_idx))  # Wrapped in int32 for safety
+        current_frontier.append(np.int32(start_idx))
 
         for step in range(0, target_steps):
             next_frontier = List.empty_list(numba.types.int32)
@@ -133,7 +125,6 @@ class NumbaTopologyUtility(ITopologyUtility):
             for i in range(len(current_frontier)):
                 current_idx = current_frontier[i]
 
-                # FIX: If already expanded, queue its known neighbors and continue!
                 if fast_ref.forward_counts[current_idx] > 0:
                     start_edge = fast_ref.forward_starts[current_idx]
                     count = fast_ref.forward_counts[current_idx]
@@ -143,7 +134,6 @@ class NumbaTopologyUtility(ITopologyUtility):
                             next_frontier.append(np.int32(n_idx))
                     continue
 
-                # DISCOVERY
                 state_vec = fast_ref.handle_map[current_idx]
                 neighbors = neighbour_func(state_vec)
 
@@ -163,11 +153,9 @@ class NumbaTopologyUtility(ITopologyUtility):
                     fast_ref.forward_edges.append(np.int32(n_idx))
                     fast_ref.reverse_edges.append(np.int32(current_idx))
 
-                    # Queue for next step if it hasn't been expanded
                     if fast_ref.forward_counts[n_idx] == 0:
                         next_frontier.append(np.int32(n_idx))
 
-            # THE CHEAT: O(1) Integer Deduplication via Boolean Mask
             current_frontier.clear()
             if len(next_frontier) > 0:
                 is_queued = np.zeros(len(fast_ref.handle_map), dtype=np.bool_)
@@ -207,7 +195,6 @@ class NumbaTopologyUtility(ITopologyUtility):
             fast_ref, neighbour_func, state_vector_in, steps
         )
 
-        # Execute pure C-level traversal
         result_indices = _njit_ping_pong_frontier(
             start_idx, steps,
             fast_ref.forward_starts, fast_ref.forward_counts, fast_ref.forward_edges,
@@ -243,11 +230,6 @@ class NumbaTopologyUtility(ITopologyUtility):
             state_vector_in: np.ndarray,
             steps: int
     ) -> None:
-        """
-        Two-Phase Engine Ignition:
-        1. Absorbs JIT compilation tax (1-step dummy).
-        2. Pre-calculates the physical adjacency graph (Deep build).
-        """
         dummy_idx = NumbaTopologyUtility._ensure_graph_built(
             fast_ref, neighbour_func, state_vector_in, 1
         )
@@ -265,60 +247,34 @@ class NumbaTopologyUtility(ITopologyUtility):
     # ==========================================
     # API IMPLEMENTATION: BACKWARD TRAVERSAL (REACHING)
     # ==========================================
+    @staticmethod
+    def get_reaching(
+            fast_ref: Any,
+            neighbour_func: Callable[[np.ndarray], np.ndarray],
+            state_vector_in: np.ndarray
+    ) -> Iterable[np.ndarray]:
+        return NumbaTopologyUtility.get_reaching_multi_step_frontier(
+            fast_ref, neighbour_func, state_vector_in, 1
+        )
 
-        # ==========================================
-        # API IMPLEMENTATION: BACKWARD TRAVERSAL (REACHING)
-        # ==========================================
+    @staticmethod
+    def get_reaching_multi_step_frontier(
+            fast_ref: Any,
+            neighbour_func: Callable[[np.ndarray], np.ndarray],
+            state_vector_in: np.ndarray,
+            steps: int
+    ) -> Iterable[np.ndarray]:
+        start_idx = NumbaTopologyUtility._ensure_graph_built(
+            fast_ref, neighbour_func, state_vector_in, steps
+        )
 
-        @staticmethod
-        def get_reaching(
-                fast_ref: Any,
-                neighbour_func: Callable[[np.ndarray], np.ndarray],
-                state_vector_in: np.ndarray
-        ) -> Iterable[np.ndarray]:
-            return NumbaTopologyUtility.get_reaching_multi_step_frontier(
-                fast_ref, neighbour_func, state_vector_in, 1
-            )
+        result_indices = _njit_ping_pong_frontier(
+            start_idx, steps,
+            fast_ref.reverse_starts, fast_ref.reverse_counts, fast_ref.reverse_edges,
+            fast_ref.buffer_a, fast_ref.buffer_b, fast_ref.seen_array
+        )
 
-        @staticmethod
-        def get_reaching_multi_step_frontier(
-                fast_ref: Any,
-                neighbour_func: Callable[[np.ndarray], np.ndarray],
-                state_vector_in: np.ndarray,
-                steps: int
-        ) -> Iterable[np.ndarray]:
-            start_idx = NumbaTopologyUtility._ensure_graph_built(
-                fast_ref, neighbour_func, state_vector_in, steps
-            )
-
-            # EXACT SAME KERNEL -> DIFFERENT MEMORY POINTERS
-            result_indices = _njit_ping_pong_frontier(
-                start_idx, steps,
-                fast_ref.reverse_starts, fast_ref.reverse_counts, fast_ref.reverse_edges,  # <-- REVERSE CSR
-                fast_ref.buffer_a, fast_ref.buffer_b, fast_ref.seen_array
-            )
-
-            return [fast_ref.handle_map[i] for i in result_indices]
-
-        @staticmethod
-        def get_reaching_multi_step_basin(
-                fast_ref: Any,
-                neighbour_func: Callable[[np.ndarray], np.ndarray],
-                state_vector_in: np.ndarray,
-                steps: int
-        ) -> Iterable[np.ndarray]:
-            start_idx = NumbaTopologyUtility._ensure_graph_built(
-                fast_ref, neighbour_func, state_vector_in, steps
-            )
-
-            # EXACT SAME KERNEL -> DIFFERENT MEMORY POINTERS
-            result_indices = _njit_ping_pong_basin(
-                start_idx, steps,
-                fast_ref.reverse_starts, fast_ref.reverse_counts, fast_ref.reverse_edges,  # <-- REVERSE CSR
-                fast_ref.buffer_a, fast_ref.buffer_b, fast_ref.seen_array
-            )
-
-            return [fast_ref.handle_map[i] for i in result_indices]
+        return [fast_ref.handle_map[i] for i in result_indices]
 
     @staticmethod
     def get_reaching_multi_step_basin(
@@ -327,6 +283,14 @@ class NumbaTopologyUtility(ITopologyUtility):
             state_vector_in: np.ndarray,
             steps: int
     ) -> Iterable[np.ndarray]:
-        raise NotImplementedError(
-            "Directed backward traversal requires reverse CSR tracking (backward_starts, backward_edges) in the Storage layer."
+        start_idx = NumbaTopologyUtility._ensure_graph_built(
+            fast_ref, neighbour_func, state_vector_in, steps
         )
+
+        result_indices = _njit_ping_pong_basin(
+            start_idx, steps,
+            fast_ref.reverse_starts, fast_ref.reverse_counts, fast_ref.reverse_edges,
+            fast_ref.buffer_a, fast_ref.buffer_b, fast_ref.seen_array
+        )
+
+        return [fast_ref.handle_map[i] for i in result_indices]

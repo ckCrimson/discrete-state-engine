@@ -107,3 +107,12 @@ class NumbaCSRGeneratorStorage(ICSRGeneratorStorage):
 
     @property
     def global_normalized_fields(self) -> np.ndarray: return self._fast_refs.global_normalized_fields
+
+    def clear(self) -> None:
+        """Zeros out the real-valued ping-pong memory."""
+        self._fast_refs.active_count_A = 0
+        self._fast_refs.active_count_B = 0
+        self._fast_refs.buffer_A_states.fill(0.0)
+        self._fast_refs.buffer_A_fields.fill(0.0)
+        self._fast_refs.buffer_B_states.fill(0.0)
+        self._fast_refs.buffer_B_fields.fill(0.0)

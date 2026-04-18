@@ -68,24 +68,14 @@ class GeneratorComponentManager(BaseComponentManager):
 
     def inject_environment(self, topology_cm: Any, global_field_cm: Any) -> None:
         """
-        Warms up the Topology graph based on the seed state, then maps all
-        environment pointers (CSR and Global Fields) directly into the FastRef.
+        PURE DOD WIRING:
+        Maps all environment pointers (CSR and Global Fields) directly into the FastRef.
+        Zero Memory Allocation. Zero Domain Logic.
         """
         self._ensure_stateful()
 
-        if self.fast_refs.active_count_A == 0:
-            raise RuntimeError(
-                "Generator is empty. Must call load_initial_state() before injecting the environment."
-            )
-
-        # 1. Lazy Topology Warmup
-        # Only expands the graph if another generator hasn't already baked it deep enough
-        required_steps = self._contract.maximum_steps
-        if getattr(topology_cm.fast_refs, 'steps_prepared', 0) < required_steps:
-            seed_states = self.fast_refs.buffer_A_states[:self.fast_refs.active_count_A]
-            topology_cm.prepare_graph(seed_states, steps=required_steps)
-
-        # 2. Pointer Wiring (Zero Memory Allocation)
+        # 1. Pointer Wiring
+        # We blindly accept the memory addresses provided by the environment.
         self.translator.bake_topology_field(self.fast_refs, topology_cm, global_field_cm)
         self._environment_ready = True
 
@@ -166,3 +156,12 @@ class GeneratorComponentManager(BaseComponentManager):
             print(f"   [Physics] Frame {current_step} computed: {len(curr_s)} active particles.")
 
         return history
+
+    def clear(self) -> None:
+        """
+        DOD MEMORY WIPE:
+        Resets the internal Ping-Pong buffers for the next simulation frame
+        without triggering Python's Garbage Collector.
+        """
+        self._ensure_stateful()
+        self.store.storage.clear()
