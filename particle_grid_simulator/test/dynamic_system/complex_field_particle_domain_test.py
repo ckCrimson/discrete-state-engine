@@ -233,69 +233,123 @@ def hardware_random_walker_neighbors(state_vec: np.ndarray) -> np.ndarray:
 def random_walker_reachable(state: State):
     return [State(v) for v in hardware_random_walker_neighbors(state.vector)]
 
+#
+# def make_exclusive_born_operator(u_coords: np.ndarray, u_weights: np.ndarray, master_states_ptr: np.ndarray):
+#     """
+#     Implements: Exclude -> Re-normalize -> Pick.
+#     Ensures no two particles can ever occupy the same state in the same tick.
+#     """
+#     # Shared across all particles in the batch during this tick
+#     # In a real batch, you'd pass this in or clear it per macro-tick
+#     reserved_states = np.full_like(master_states_ptr, -999.0)
+#
+#     @njit(fastmath=True)
+#     def operator_kernel(state_vec: np.ndarray, gen_states: np.ndarray, gen_fields: np.ndarray) -> np.ndarray:
+#         M = len(gen_states)
+#         valid_indices = []
+#         raw_probs = np.zeros(M, dtype=np.float64)
+#
+#         # --- STEP 1: EXCLUSION & RAW PROBABILITY ---
+#         for i in range(M):
+#             cand = gen_states[i]
+#
+#             # Check against CURRENT positions (master_states_ptr)
+#             occupied = False
+#             for p in range(len(master_states_ptr)):
+#                 if cand[0] == master_states_ptr[p, 0] and cand[1] == master_states_ptr[p, 1]:
+#                     if not (cand[0] == state_vec[0] and cand[1] == state_vec[1]):
+#                         occupied = True;
+#                         break
+#
+#             # Check against RESERVED positions (reserved_states)
+#             for p in range(len(reserved_states)):
+#                 if cand[0] == reserved_states[p, 0] and cand[1] == reserved_states[p, 1]:
+#                     occupied = True;
+#                     break
+#
+#             if occupied: continue
+#
+#             # --- STEP 2: FIELD WEIGHTING ---
+#             for j in range(len(u_coords)):
+#                 if u_coords[j, 0] == cand[0] and u_coords[j, 1] == cand[1]:
+#                     c_val = gen_fields[i, 0] * u_weights[j, 0]
+#                     p_val = c_val.real ** 2 + c_val.imag ** 2
+#                     if p_val > 1e-15:
+#                         raw_probs[i] = p_val
+#                         valid_indices.append(i)
+#                     break
+#
+#         # --- STEP 3: RE-NORMALIZE & PICK ---
+#         total_p = np.sum(raw_probs)
+#         if total_p > 1e-15:
+#             # Re-normalization happens here implicitly by using total_p as the scale
+#             rand_val = np.random.random() * total_p
+#             cumulative = 0.0
+#             for idx in valid_indices:
+#                 cumulative += raw_probs[idx]
+#                 if rand_val <= cumulative:
+#                     new_state = gen_states[idx]
+#                     # Update reserved_states (must be handled carefully in parallel/batch)
+#                     return new_state
+#
+#         return state_vec
+#
+#     return operator_kernel
+
 
 def make_exclusive_born_operator(u_coords: np.ndarray, u_weights: np.ndarray, master_states_ptr: np.ndarray):
     """
-    Implements: Exclude -> Re-normalize -> Pick.
-    Ensures no two particles can ever occupy the same state in the same tick.
+    Pure Born Rule with Sequential Exclusion.
+    Logic: Exclude current/claimed positions -> Re-normalize -> Pick.
     """
-    # Shared across all particles in the batch during this tick
-    # In a real batch, you'd pass this in or clear it per macro-tick
-    reserved_states = np.full_like(master_states_ptr, -999.0)
 
     @njit(fastmath=True)
     def operator_kernel(state_vec: np.ndarray, gen_states: np.ndarray, gen_fields: np.ndarray) -> np.ndarray:
         M = len(gen_states)
-        valid_indices = []
-        raw_probs = np.zeros(M, dtype=np.float64)
+        probs = np.zeros(M, dtype=np.float64)
 
-        # --- STEP 1: EXCLUSION & RAW PROBABILITY ---
         for i in range(M):
             cand = gen_states[i]
 
-            # Check against CURRENT positions (master_states_ptr)
-            occupied = False
+            # --- THE EXCLUSION CHECK ---
+            # We check directly against master_states_ptr.
+            # Because the Runner (Phase 2) updates this pointer sequentially,
+            # this check automatically covers both current and newly claimed spots.
+            is_occupied = False
             for p in range(len(master_states_ptr)):
                 if cand[0] == master_states_ptr[p, 0] and cand[1] == master_states_ptr[p, 1]:
+                    # Allow the particle to 'stay put' on its own start position
                     if not (cand[0] == state_vec[0] and cand[1] == state_vec[1]):
-                        occupied = True;
+                        is_occupied = True
                         break
 
-            # Check against RESERVED positions (reserved_states)
-            for p in range(len(reserved_states)):
-                if cand[0] == reserved_states[p, 0] and cand[1] == reserved_states[p, 1]:
-                    occupied = True;
-                    break
+            if is_occupied:
+                continue
 
-            if occupied: continue
-
-            # --- STEP 2: FIELD WEIGHTING ---
+                # --- FIELD EVALUATION ---
             for j in range(len(u_coords)):
                 if u_coords[j, 0] == cand[0] and u_coords[j, 1] == cand[1]:
+                    # Combine local wave with global boundary
                     c_val = gen_fields[i, 0] * u_weights[j, 0]
-                    p_val = c_val.real ** 2 + c_val.imag ** 2
-                    if p_val > 1e-15:
-                        raw_probs[i] = p_val
-                        valid_indices.append(i)
+                    probs[i] = c_val.real ** 2 + c_val.imag ** 2
                     break
 
-        # --- STEP 3: RE-NORMALIZE & PICK ---
-        total_p = np.sum(raw_probs)
-        if total_p > 1e-15:
-            # Re-normalization happens here implicitly by using total_p as the scale
-            rand_val = np.random.random() * total_p
+        # --- RE-NORMALIZE AND PICK ---
+        total_prob = np.sum(probs)
+        if total_prob > 1e-12:
+            rand_val = np.random.random() * total_prob
             cumulative = 0.0
-            for idx in valid_indices:
-                cumulative += raw_probs[idx]
+            for i in range(M):
+                cumulative += probs[i]
                 if rand_val <= cumulative:
-                    new_state = gen_states[idx]
-                    # Update reserved_states (must be handled carefully in parallel/batch)
-                    return new_state
+                    return gen_states[i]
 
         return state_vec
 
     return operator_kernel
-# ==========================================
+
+
+#==========================================
 # 2. VISUALIZATION
 # ==========================================
 def save_complex_gif(csv_path: Path, save_path: Path, n_particles: int):
@@ -332,7 +386,7 @@ def save_complex_gif(csv_path: Path, save_path: Path, n_particles: int):
 # 3. MASTER PIPELINE
 # ==========================================
 def run_complex_box_test():
-    NUM_PARTICLES = 3
+    NUM_PARTICLES = 10
     STEPS = 5
     ITERATIONS = 60
     SAVE_DIR = Path(r"./plots")
@@ -390,7 +444,7 @@ def run_complex_box_test():
     s0[:, 0] = np.linspace(-8.0, 8.0, NUM_PARTICLES)
     f0 = np.ones((NUM_PARTICLES, 1), dtype=np.complex128)
 
-    smart_kernel = make_resolved_quantum_operator(u_coords, u_weights, s0)
+    smart_kernel = make_exclusive_born_operator(u_coords, u_weights, s0)
     op_cm = OperatorComponentManager.create_raw(smart_kernel, NumbaOperatorUtility(), State)
 
     system_data = SingleChannelFDSData(

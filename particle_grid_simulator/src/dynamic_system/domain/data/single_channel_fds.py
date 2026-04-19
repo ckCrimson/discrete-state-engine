@@ -128,40 +128,48 @@ class SingleChannelFDSRunner(ISingleChannelFDSRunner):
             # Store the resulting wave for the operator phase
             self._last_gen_states, self._last_gen_fields = self.data.generator_cm.generate_steps(steps=steps)
 
+
         else:
+
             # PHASE 2: Observation & Collapse
+
             if self._last_gen_states is None:
                 raise RuntimeError("Must call next(apply_generator=True) before collapsing.")
 
             M = len(self._last_gen_states)
 
-            # Broadcast generated states to match Operator contract
-            batch_gen_states = np.ascontiguousarray(
-                np.broadcast_to(self._last_gen_states, (self.N_entities, M, self.state_dim))
-            )
+            # --- SEQUENTIAL COLLAPSE ---
 
-            # Route Field arrays based on Channel type (Overlapping vs Independent)
-            if self.data.is_independent:
-                # Shape is already (N, M, Field_Dim)
-                batch_gen_fields = np.empty((self.N_entities, M, self.field_dim), dtype=np.float64)
-                for p in range(self.N_entities):
-                    # Note: Handles the slicing mapping you had in your independent script
-                    batch_gen_fields[p, :, 0] = self._last_gen_fields[:, p]
-            else:
-                # Overlapping returns (1, M, Field_Dim), broadcast to all N entities
-                batch_gen_fields = np.ascontiguousarray(
-                    np.broadcast_to(self._last_gen_fields, (self.N_entities, M, self.field_dim))
-                )
+            # We update self.current_states particle-by-particle.
 
-            # Evolve current states in-place via utility
-            self.utility.evolve(self.data.operator_cm, self.current_states, batch_gen_states, batch_gen_fields)
+            # This allows the next particle's operator to see the new occupied spot.
 
-            # Log the new state
+            for p in range(self.N_entities):
+
+                p_state = self.current_states[p:p + 1]
+
+                p_gen_states = np.ascontiguousarray(self._last_gen_states).reshape(1, M, self.state_dim)
+
+                if self.data.is_independent:
+
+                    p_gen_fields = self._last_gen_fields[:, p:p + 1].reshape(1, M, self.field_dim)
+
+                else:
+
+                    p_gen_fields = self._last_gen_fields.reshape(1, M, self.field_dim)
+
+                self.utility.evolve(self.data.operator_cm, p_state, p_gen_states, p_gen_fields)
+
+                # Update the master pointer so the next particle avoids this spot!
+
+                self.current_states[p] = p_state[0]
+
             self.tick_count += 1
+
             self._record_frame()
 
-            # Clear buffers to prevent stale data
             self._last_gen_states = None
+
             self._last_gen_fields = None
 
     # Memory handling remains identical to the classical system
