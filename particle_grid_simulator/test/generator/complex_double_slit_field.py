@@ -450,7 +450,7 @@ def run_complex_field_test():
     generator_contract = GeneratorKernelDataContract.from_domain(generator_data, global_field_dim=1)
     generator_cm = GeneratorComponentManager(
         generator_contract, NumbaComplexCSRGeneratorStorage(generator_contract),
-        GenericGeneratorTranslator(), GenericGeneratorKernelUtility, natural_path_integral_transition
+        GenericGeneratorTranslator(), GenericGeneratorKernelUtility, angular_coin_transition
     )
 
     print("\n[SYSTEM] Bootstrapping JIT Compilers...")

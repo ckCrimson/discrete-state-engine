@@ -50,8 +50,8 @@ from particle_grid_simulator.src.operator.kernel.numba.utility.kernel_v1 import 
 # CONFIGURATION
 # ==========================================
 NUM_PARTICLES = 15
-STEPS = 4
-ITERATIONS = 40
+STEPS = 30
+ITERATIONS = 12
 PATH = r"E:\Particle Field Simulation\particle_grid_simulator\test\operator\plots"
 
 
@@ -95,13 +95,12 @@ def quantum_collapse_batch_kernel(state_vec: np.ndarray, gen_states: np.ndarray,
 # ==========================================
 # FRAME-BY-FRAME VISUALIZATION
 # ==========================================
-def animate_multi_trajectory(history_particles: list, history_wave: list, save_dir: str):
+def animate_multi_trajectory(history_particles: np.ndarray, history_wave: list, save_dir: str):
     abs_save_dir = os.path.normpath(save_dir)
     if not os.path.exists(abs_save_dir):
         os.makedirs(abs_save_dir)
 
-    history_arr = np.array(history_particles)
-    num_frames = len(history_arr)
+    num_frames = len(history_particles)
 
     fig, ax = plt.subplots(figsize=(12, 10))
     colors = plt.cm.hsv(np.linspace(0, 1, NUM_PARTICLES))
@@ -113,8 +112,8 @@ def animate_multi_trajectory(history_particles: list, history_wave: list, save_d
     ax.set_aspect('equal', adjustable='datalim')
 
     # Establish visual limits safely
-    x_min, x_max = np.min(history_arr[:, :, 0]), np.max(history_arr[:, :, 0])
-    y_min, y_max = np.min(history_arr[:, :, 1]), np.max(history_arr[:, :, 1])
+    x_min, x_max = np.min(history_particles[:, :, 0]), np.max(history_particles[:, :, 0])
+    y_min, y_max = np.min(history_particles[:, :, 1]), np.max(history_particles[:, :, 1])
     buffer = max((x_max - x_min) * 0.1, (y_max - y_min) * 0.1, 5)
     ax.set_xlim(x_min - buffer, x_max + buffer)
     ax.set_ylim(y_min - buffer, y_max + buffer)
@@ -134,8 +133,8 @@ def animate_multi_trajectory(history_particles: list, history_wave: list, save_d
         else:
             wave_scat.set_offsets(np.empty((0, 2)))
 
-        trail_data = history_arr[:frame + 1]
-        current_pos = history_arr[frame]
+        trail_data = history_particles[:frame + 1]
+        current_pos = history_particles[frame]
 
         for p in range(NUM_PARTICLES):
             particle_lines[p].set_data(trail_data[:, p, 0], trail_data[:, p, 1])
@@ -155,6 +154,16 @@ def animate_multi_trajectory(history_particles: list, history_wave: list, save_d
 # EXECUTION PIPELINE
 # ==========================================
 def run_complex_multi_operator_test(steps: int = STEPS, iterations: int = ITERATIONS):
+    # --- PROFILER SETUP ---
+    perf_metrics = {
+        "Topology Warmup": 0.0,
+        "JIT Compile": 0.0,
+        "Wave Generation (Numba)": 0.0,
+        "Wave Collapse (Operator)": 0.0,
+        "Data Tracking": 0.0,
+        "GIF Rendering": 0.0
+    }
+
     print(f"1. Configuring Complex DOD Blueprint (Batch: {NUM_PARTICLES}, Steps: {steps}, Iterations: {iterations})...")
 
     algebra = FieldAlgebra(dimensions=1, dtype=np.complex128)
@@ -192,37 +201,43 @@ def run_complex_multi_operator_test(steps: int = STEPS, iterations: int = ITERAT
     print("===========================================")
 
     current_states = np.random.randint(-2, 3, size=(NUM_PARTICLES, 2)).astype(np.float64)
-    history_particles = [current_states.copy()]
-    history_wave = [(np.empty((0, 2)), np.empty(0))]
 
+    # ---------------------------------------------------------
+    # MEMORY PRE-ALLOCATION (Fixes the .copy() bottleneck)
+    # ---------------------------------------------------------
+    total_frames = 1 + (iterations * steps) + iterations
+    history_particles = np.zeros((total_frames, NUM_PARTICLES, 2), dtype=np.float64)
+    history_wave = []
+
+    frame_idx = 0
+    history_particles[frame_idx] = current_states
+    history_wave.append((np.empty((0, 2)), np.empty(0)))
+    frame_idx += 1
+
+    t0 = time.perf_counter()
     safe_warmup = (steps + iterations)
     print(f"   -> Expanding Topology Graph (Warmup depth: {safe_warmup})...")
     topology_cm.warmup([State(np.array([0.0, 0.0]))], steps=safe_warmup)
+    perf_metrics["Topology Warmup"] = time.perf_counter() - t0
 
     print("   -> Wiring Hardware Arrays & Complex JIT Math Callables...")
     generator_cm.inject_environment(topology_cm, global_field_cm)
 
-    # ---------------------------------------------------------
-    # NEW: JIT WARMUP PHASE (Compiles kernels before the timer)
-    # ---------------------------------------------------------
+    t0 = time.perf_counter()
     print("   -> Executing JIT Warmup (Compiling Numba kernels)...")
     dummy_states = np.zeros((NUM_PARTICLES, 2), dtype=np.float64)
     dummy_phases = np.ones((NUM_PARTICLES, 1), dtype=np.complex128)
-
     generator_cm.load_initial_state(dummy_states, dummy_phases)
     d_states, d_fields = generator_cm.generate_steps(steps=1)
-
     M_dummy = len(d_states)
     b_s_dummy = np.ascontiguousarray(np.broadcast_to(d_states, (NUM_PARTICLES, M_dummy, 2)))
     b_f_dummy = np.ascontiguousarray(np.broadcast_to(d_fields, (NUM_PARTICLES, M_dummy, 1)))
-
     _ = op_cm.evolve_batch_inplace(dummy_states, b_s_dummy, b_f_dummy)
     generator_cm.clear()
-    print("   -> JIT Warmup Complete.")
-    # ---------------------------------------------------------
+    perf_metrics["JIT Compile"] = time.perf_counter() - t0
 
     print(f"   -> Starting Frame-by-Frame Continuous Observer Loop...")
-    t_start = time.perf_counter()  # Timer starts NOW, post-compilation
+    loop_start = time.perf_counter()
 
     for i in range(iterations):
         generator_cm.clear()
@@ -230,30 +245,51 @@ def run_complex_multi_operator_test(steps: int = STEPS, iterations: int = ITERAT
         particle_phases = np.exp(1j * np.random.uniform(0, 2 * np.pi, (NUM_PARTICLES, 1))).astype(np.complex128)
         generator_cm.load_initial_state(current_states, particle_phases)
 
-        # --- 1. CONTINUOUS EVOLUTION (The Wave Grows) ---
+        # --- 1. CONTINUOUS EVOLUTION ---
         for step in range(steps):
+            t_gen = time.perf_counter()
             final_states, final_fields = generator_cm.generate_steps(steps=1)
+            perf_metrics["Wave Generation (Numba)"] += time.perf_counter() - t_gen
 
-            history_particles.append(current_states.copy())
+            t_track = time.perf_counter()
+            history_particles[frame_idx] = current_states
             history_wave.append((final_states.copy(), np.abs(final_fields[:, 0]) ** 2))
+            frame_idx += 1
+            perf_metrics["Data Tracking"] += time.perf_counter() - t_track
 
-        # --- 2. DISCRETE OBSERVATION (The Wave Collapses) ---
+        # --- 2. DISCRETE OBSERVATION ---
+        t_col = time.perf_counter()
         M = len(final_states)
         b_s = np.ascontiguousarray(np.broadcast_to(final_states, (NUM_PARTICLES, M, 2)))
         b_f = np.ascontiguousarray(np.broadcast_to(final_fields, (NUM_PARTICLES, M, 1)))
-
         op_cm.evolve_batch_inplace(current_states, b_s, b_f)
+        perf_metrics["Wave Collapse (Operator)"] += time.perf_counter() - t_col
 
-        history_particles.append(current_states.copy())
+        t_track = time.perf_counter()
+        history_particles[frame_idx] = current_states
         history_wave.append((np.empty((0, 2)), np.empty(0)))
+        frame_idx += 1
+        perf_metrics["Data Tracking"] += time.perf_counter() - t_track
 
         if (i + 1) % 10 == 0:
             print(f"      Collapse Event {i + 1}/{iterations} complete...")
 
-    print(f"   [Phase 3] Total Runtime (Post-JIT): {(time.perf_counter() - t_start):.4f} s")
+    loop_end = time.perf_counter()
 
+    t_anim = time.perf_counter()
     animate_multi_trajectory(history_particles, history_wave, PATH)
+    perf_metrics["GIF Rendering"] = time.perf_counter() - t_anim
+
+    # --- PRINT PROFILER RESULTS ---
+    print("\n===========================================")
+    print("           PERFORMANCE PROFILER            ")
+    print("===========================================")
+    print(f"Total Hot Loop Runtime : {(loop_end - loop_start):.4f} seconds")
+    print("-" * 43)
+    for phase, duration in perf_metrics.items():
+        print(f"{phase:<25}: {duration:.4f} s")
+    print("===========================================\n")
 
 
 if __name__ == "__main__":
-    run_complex_multi_operator_test(steps=30, iterations=8)
+    run_complex_multi_operator_test(steps=30, iterations=12)
