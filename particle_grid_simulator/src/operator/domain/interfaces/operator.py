@@ -1,5 +1,7 @@
 from typing import Protocol, Type, Callable, Any, TypeVar
 
+import numpy as np
+
 T = TypeVar('T')
 
 
@@ -36,4 +38,9 @@ class IOperatorUtility(Protocol):
                 Returns:
                     An instance of the state class defined in the operator.
         """
+        ...
+
+    @staticmethod
+    def evolve_batch(operator: IOperatorData[T], batch_data_context: np.ndarray) -> T:
+        """Explicitly handles N-dimensional contiguous memory blocks."""
         ...
