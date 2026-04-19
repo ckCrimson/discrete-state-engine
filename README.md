@@ -87,6 +87,7 @@ Because the engine abstracts states into pure vector encodings and links them vi
 * **Artificial Intelligence:** Markov Decision Process (MDP) solver for reinforcement learning state-spaces.
 
 ![Quantum Evolution](particle_grid_simulator/test/generator/plot/quantum_evolution.gif)
+
 ![Interacting Multi Particle system](particle_grid_simulator/test/operator/plots/complex_frame_by_frame.gif)
 
 ## 6. Quick Start API
