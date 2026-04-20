@@ -91,19 +91,22 @@ class NumbaFieldTranslator(IFieldTranslator):
             for i, state_key in enumerate(state_tuples):
                 idx = self._state_to_id_map.get(state_key, -1)
                 if idx == -1:
-                    # FIX: The next ID is exactly the current size of the dictionary.
                     idx = len(self._state_to_id_map)
                     self._state_to_id_map[state_key] = idx
                 target_indices[i] = idx
 
-            # 4. BULK HARDWARE WRITES (Zero Python Looping)
+            # 4. BULK HARDWARE WRITES
             if cmd_type == FieldCommandType.SET.value:
-                raw_fields = np.asarray(fields)
+                # SET is your Override/Upsert!
+                # We dynamically pull the dtype from the algebra
+                raw_fields = np.asarray(fields, dtype=algebra.dtype)
                 ref.field_array[target_indices] = raw_fields
                 ref.is_mapped_array[target_indices] = True
 
             elif cmd_type == FieldCommandType.ADD.value:
-                raw_fields = np.asarray(fields, dtype=np.float64)
+                # ADD is your Accumulator (+=)
+                # FIX: Dynamically pull the dtype from the algebra! No more float64 crashes.
+                raw_fields = np.asarray(fields, dtype=algebra.dtype)
                 is_mapped = ref.is_mapped_array[target_indices]
 
                 # Mapped States: Bulk Addition
