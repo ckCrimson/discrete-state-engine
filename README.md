@@ -20,7 +20,7 @@ Because FDS separates the physics (Domain) from the execution (Kernel), you can 
 
 **Classical Deterministic System** | **Quantum Probabilistic System**
 --- | ---
-![Classical Simulation](particle_grid_simulator/test/dynamic_system/plots/fast_bouncing_box.gif) | ![Quantum Simulation](test/dynamic_system/plots/quantum_propagation_collapse.gif)
+![Classical Simulation](particle_grid_simulator/test/dynamic_system/plots/fast_bouncing_box.gif) | ![Quantum Simulation](particle_grid_simulator/test/dynamic_system/plots/quantum_propagation_collapse.gif)
 *Entities reacting to hard topological boundaries and classical gradients.* | *Entities experiencing phase-shift interference and Born Rule wave collapse.*
 
 > **Note:** Both simulations above are executed through the exact same FDS pipeline at C-level speeds.
