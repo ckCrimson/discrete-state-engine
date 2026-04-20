@@ -12,7 +12,7 @@ Systems are designed in a rich, human-friendly **Domain layer**, then translated
 
 ---
 
-## 👁️ Visual Proof: One Pipeline, Infinite Domains
+## Visual Proof: One Pipeline, Infinite Domains
 
 Because FDS separates the physics (Domain) from the execution (Kernel), you can simulate fundamentally different mathematical realities simply by swapping the Field Algebra and Operator contracts.
 
