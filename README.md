@@ -63,7 +63,7 @@ FDS is the culmination of these components, binding them into a strict, memory-s
 3. **Observe (Operator):** Evaluates the generated fields and picks the final state.
 4. **Collapse:** The entity adopts the new state, the field collapses to unity at that coordinate, and the cycle repeats.
 
-## 🏗️ The Dual-Flow Architecture (Data-Oriented Design)
+## The Dual-Flow Architecture (Data-Oriented Design)
 
 Most Python physics engines force a compromise: they are either easy to write but slow to execute, or fast to execute but a nightmare to maintain. FDS solves this by abandoning object-oriented processing in the simulation hot-loop, utilizing a strict **Dual-Flow Architecture** built on Data-Oriented Design (DOD) principles.
 
@@ -73,63 +73,75 @@ The engine separates the conceptual rules of the simulation from the hardware ex
 
 ```mermaid
 flowchart TD
-    subgraph Domain ["1. Domain Layer (Human-Friendly)"]
-        Logic["User Domain Logic"]
-        Bridge["Inter-CM Bridge Data"]
+    %% External Inputs
+    Bridge(["Bridge Data for interCM comm"])
+    Contract(["Kernel Data Contract"])
+
+    %% Component Manager Block
+    subgraph Component Manager ["Component Manager"]
+        PublicAPI["Public API"]
+        UtilAPI["Utility API"]
+        UtilMethod["Utility Method"]
+        FastRef["[Fast ref]"]
     end
 
-    subgraph CM ["2. Translation Layer (Component Manager)"]
-        API["Public API"]
-        Buffer["Command Buffer"]
-        Translator["Translator / Sync Engine"]
+    %% Middle Layer
+    Domain["DOMAIN"]
+    CmdBuff["COMMAND Buff"]
+    KDC["Kernel Data Control"]
 
-        subgraph CS ["Component Storage"]
-            Mapped[("Mapped Domain Data")]
-            Optimized[("Kernel-Optimized Memory")]
-        end
+    %% Kernel Block
+    subgraph Kernel ["Kernel (Swapable)"]
+        Translator["Translator"]
+        Utility["utility"]
+        Storage["Storage"]
     end
 
-    subgraph Interface ["Dependency Injection Boundary"]
-        Contract{{"Kernel Data Contract"}}
-    end
+    %% Inputs to CM
+    Bridge --> PublicAPI
+    Contract --> UtilAPI
 
-    subgraph Kernel ["3. Kernel Layer (Execution Engine)"]
-        Default["Default JIT Kernel"]
-        Custom["Custom Engine (C++ / CUDA / Rust)"]
-    end
+    %% CM to Middle Layer
+    PublicAPI -- "get Domain" --> Domain
+    PublicAPI -- "Data" --> CmdBuff
+    UtilMethod --> KDC
 
-    %% Flow
-    Logic -->|Full Bake| Translator
-    Bridge --> API
-    Logic --> API
-    API --> Buffer
-    Buffer -->|bake_incremental| Translator
+    %% Middle Layer to Kernel
+    KDC --> Kernel
+    CmdBuff -- "bake incream" --> Translator
+    
+    %% Domain <--> Translator Loop
+    Domain --> Translator
+    Translator -- "sync" --> Domain
 
-    Translator <-->|Syncs| Mapped
-    Translator -->|Transforms to| Optimized
+    %% Fast Ref to Utility
+    FastRef --> Utility
 
-    Optimized <==>|Fast Ref / Pointers| Contract
-
-    Contract -.->|Injected via DI| Default
-    Contract -.->|Hot Swappable| Custom
+    %% Internal Kernel Routing
+    Translator -- "bake" --> Storage
+    Translator -- "bake increamental" --> Storage
 ```
+Details: For the exact memory layout of the component storage and the incremental baking queues, read the CM Architectural Specification.
 
-📖 Gory Details: For the exact memory layout of the component storage and the incremental baking queues, read the CM Architectural Specification.
+### **The Core Components**
 
-The Core Components
-1. The Domain Layer: Where users define Topologies, Field Algebras, and Entities using rich, readable Python objects. It handles high-level rules without worrying about memory management.
+1. The Domain Layer: Where users define Topologies, Field Algebras, and Entities using rich, readable Python objects.
 
 2. The Component Manager (CM): The translation bridge.
 
-Public API & Command Buffer: Safely accepts external data and inter-CM bridge data, queuing mutations to prevent race conditions.
+Initialization: The KernelDataContract is injected into the CM's constructor. The CM then uses this contract to initialize the empty Component Storage layout before any domain data is baked.
 
-The Translator: Strips away OOP bloat. It takes queued commands (bake_incremental) and flattens entity states and field weights into contiguous, strongly-typed memory blocks.
+Public API: Safely accepts Bridge Objects for inter-CM communication.
 
-Component Storage: Maintains a synchronized dual-state: the mapped Python objects for user readouts, and the flat C-arrays for the execution engine.
+Utility Layer: The Utility API and internal Fast References allow Utility Methods to execute fast internal calculations by directly accessing Kernel Data.
 
-3. The Kernel Contract (Dependency Injection): The rigid boundary that makes the engine modular. The Component Manager guarantees that the flat C-arrays will perfectly match a specific KernelDataContract.
+The Translator: It takes queued commands (bake_incremental) or direct Domain inputs (bake) and flattens them into the pre-allocated memory blocks.
 
-4. The Kernel Layer: The hot-loop execution engine. Bypassing the Python GIL entirely, the kernel receives the C-arrays via Fast Reference pointers and computes the wave expansions and collapses at hardware speeds.
+Component Storage (CS): Maintains a synchronized dual-state: the mapped Domain Data for user readouts, and the Kernel Data optimized for the execution engine.
+
+3. The Kernel Contract (Dependency Injection): The rigid blueprint that ensures the Component Storage perfectly matches what the hardware expects.
+
+4. The Kernel Layer: The execution engine grabs the optimized data via an external Fast Reference pointer and computes wave expansions and collapses at hardware speeds.
 
 Zero-Friction Hot Swapping
-Because the execution engine is injected via Dependency Injection (DI) and only interacts with the KernelDataContract, kernels are perfectly hot-swappable. A user can seamlessly swap out the default Numba kernel for a custom C++ or CUDA kernel without rewriting a single line of their Domain layer logic.
+Because the execution engine only interacts with the Component Storage via injected Fast References defined by the Contract, kernels are perfectly hot-swappable. A user can swap the default kernel for a custom backend without rewriting a single line of Domain logic.
