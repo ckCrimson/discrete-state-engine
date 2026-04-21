@@ -43,7 +43,7 @@ If the State Space is the map, Topology is the road network. It defines the conn
 
 ### 3. Fields (The Algebraic Weights)
 Fields encode the mathematical rules governing transition probabilities. Formally defined as an inner product vector space (with defined addition, multiplication, unity, and null values), the Field maps a specific mathematical weight to every state. This **Field Algebra** dictates the physical reality of the simulation, whether using standard floats for classical diffusion or `complex128` arrays for quantum interference.
-*🔗 See: [Implementing Custom Field Algebras](docs/algebras.md)*
+*🔗 See: [Implementing Custom Field Algebras](docs/fields.md)*
 
 ### 4. The Generator (The Path Integral Explorer)
 Given the Topology and Field Algebra, the Generator acts as a highly advanced, generalized Markov chain. It searches through all possible paths the system could take to reach a frontier state, accumulating the field weights for every transition along the way. This effectively performs a discrete path integral, calculating the superimposed probability field without actually moving the entities.
