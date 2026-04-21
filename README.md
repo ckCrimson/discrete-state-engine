@@ -85,7 +85,7 @@ flowchart TD
 
         subgraph CS ["Component Storage"]
             Mapped[("Mapped Domain Data")]
-            Arrays[("Flat C-Arrays (DOD)")]
+            Optimized[("Kernel-Optimized Memory")]
         end
     end
 
@@ -93,9 +93,9 @@ flowchart TD
         Contract{{"Kernel Data Contract"}}
     end
 
-    subgraph Kernel ["3. Kernel Layer (Hardware-Friendly)"]
-        Numba["Numba JIT Kernel (Default)"]
-        Custom["Custom C++ / CUDA Kernel"]
+    subgraph Kernel ["3. Kernel Layer (Execution Engine)"]
+        Default["Default JIT Kernel"]
+        Custom["Custom Engine (C++ / CUDA / Rust)"]
     end
 
     %% Flow
@@ -106,13 +106,14 @@ flowchart TD
     Buffer -->|bake_incremental| Translator
 
     Translator <-->|Syncs| Mapped
-    Translator -->|Flattens to| Arrays
+    Translator -->|Transforms to| Optimized
 
-    Arrays <==>|Fast Ref Pointers| Contract
+    Optimized <==>|Fast Ref / Pointers| Contract
 
-    Contract -.->|Injected via DI| Numba
+    Contract -.->|Injected via DI| Default
     Contract -.->|Hot Swappable| Custom
 ```
+
 📖 Gory Details: For the exact memory layout of the component storage and the incremental baking queues, read the CM Architectural Specification.
 
 The Core Components
