@@ -62,3 +62,73 @@ FDS is the culmination of these components, binding them into a strict, memory-s
 2. **Propagate (Generator):** Expands the possibility frontier over $N$ steps, accumulating field weights.
 3. **Observe (Operator):** Evaluates the generated fields and picks the final state.
 4. **Collapse:** The entity adopts the new state, the field collapses to unity at that coordinate, and the cycle repeats.
+
+## 🏗️ The Dual-Flow Architecture (Data-Oriented Design)
+
+Most Python physics engines force a compromise: they are either easy to write but slow to execute, or fast to execute but a nightmare to maintain. FDS solves this by abandoning object-oriented processing in the simulation hot-loop, utilizing a strict **Dual-Flow Architecture** built on Data-Oriented Design (DOD) principles.
+
+The engine separates the conceptual rules of the simulation from the hardware execution.
+
+### The Data Flow & Dependency Injection
+
+```mermaid
+flowchart TD
+    subgraph Domain ["1. Domain Layer (Human-Friendly)"]
+        Logic["User Domain Logic"]
+        Bridge["Inter-CM Bridge Data"]
+    end
+
+    subgraph CM ["2. Translation Layer (Component Manager)"]
+        API["Public API"]
+        Buffer["Command Buffer"]
+        Translator["Translator / Sync Engine"]
+
+        subgraph CS ["Component Storage"]
+            Mapped[("Mapped Domain Data")]
+            Arrays[("Flat C-Arrays (DOD)")]
+        end
+    end
+
+    subgraph Interface ["Dependency Injection Boundary"]
+        Contract{{"Kernel Data Contract"}}
+    end
+
+    subgraph Kernel ["3. Kernel Layer (Hardware-Friendly)"]
+        Numba["Numba JIT Kernel (Default)"]
+        Custom["Custom C++ / CUDA Kernel"]
+    end
+
+    %% Flow
+    Logic -->|Full Bake| Translator
+    Bridge --> API
+    Logic --> API
+    API --> Buffer
+    Buffer -->|bake_incremental| Translator
+
+    Translator <-->|Syncs| Mapped
+    Translator -->|Flattens to| Arrays
+
+    Arrays <==>|Fast Ref Pointers| Contract
+
+    Contract -.->|Injected via DI| Numba
+    Contract -.->|Hot Swappable| Custom
+```
+📖 Gory Details: For the exact memory layout of the component storage and the incremental baking queues, read the CM Architectural Specification.
+
+The Core Components
+1. The Domain Layer: Where users define Topologies, Field Algebras, and Entities using rich, readable Python objects. It handles high-level rules without worrying about memory management.
+
+2. The Component Manager (CM): The translation bridge.
+
+Public API & Command Buffer: Safely accepts external data and inter-CM bridge data, queuing mutations to prevent race conditions.
+
+The Translator: Strips away OOP bloat. It takes queued commands (bake_incremental) and flattens entity states and field weights into contiguous, strongly-typed memory blocks.
+
+Component Storage: Maintains a synchronized dual-state: the mapped Python objects for user readouts, and the flat C-arrays for the execution engine.
+
+3. The Kernel Contract (Dependency Injection): The rigid boundary that makes the engine modular. The Component Manager guarantees that the flat C-arrays will perfectly match a specific KernelDataContract.
+
+4. The Kernel Layer: The hot-loop execution engine. Bypassing the Python GIL entirely, the kernel receives the C-arrays via Fast Reference pointers and computes the wave expansions and collapses at hardware speeds.
+
+Zero-Friction Hot Swapping
+Because the execution engine is injected via Dependency Injection (DI) and only interacts with the KernelDataContract, kernels are perfectly hot-swappable. A user can seamlessly swap out the default Numba kernel for a custom C++ or CUDA kernel without rewriting a single line of their Domain layer logic.
