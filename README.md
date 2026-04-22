@@ -145,3 +145,66 @@ Component Storage (CS): Maintains a synchronized dual-state: the mapped Domain D
 
 Zero-Friction Hot Swapping
 Because the execution engine only interacts with the Component Storage via injected Fast References defined by the Contract, kernels are perfectly hot-swappable. A user can swap the default kernel for a custom backend without rewriting a single line of Domain logic.
+
+## 🚀 Quick Start (The Hello World of FDS)
+
+Despite the heavy data-oriented architecture under the hood, writing an FDS simulation in the Domain layer is completely object-oriented and user-friendly. 
+
+Here is how you initialize the engine, define a space, and run a simulation tick:
+
+```python
+import numpy as np
+from particle_grid_simulator.src.dynamic_system.domain.data.single_channel_fds import SingleChannelFDSData, SingleChannelFDSRunner
+# ... (imports for Component Managers, Numba Storage, and Translators)
+
+# ==========================================
+# 1. Dependency Injection: Initialize Component Managers
+# ==========================================
+# Each manager is explicitly injected with its specific Kernel Contract, Storage, Translator, and Utility.
+topology_cm = TopologyComponentManager.create_from_raw_data(
+    t_contract, NumbaTopologyStorage(t_contract), NumbaTopologyTranslator(), NumbaTopologyUtility
+)
+
+generator_cm = GeneratorComponentManager(
+    gen_contract, NumbaComplexCSRGeneratorStorage(gen_contract), 
+    GenericGeneratorTranslator(), GenericGeneratorKernelUtility, uniform_complex_transition
+)
+
+field_cm = FieldComponentManager.create_from_raw(
+    NumbaComplexUtility, f_contract, NumbaComplexFieldKernelStorage(f_contract), ...
+)
+
+operator_cm = OperatorComponentManager.create_raw(
+    smart_exclusive_born_kernel, NumbaOperatorUtility(), State
+)
+
+# ==========================================
+# 2. System Binding
+# ==========================================
+# Define initial states (e.g., 10 particles) and complex wave amplitudes
+s0 = np.zeros((10, 2), dtype=np.float64) 
+f0 = np.ones((10, 1), dtype=np.complex128)
+
+# Bind the component managers into a single synchronized data structure
+system_data = SingleChannelFDSData(
+    _initial_states=s0, _initial_fields=f0,
+    _topology_cm=topology_cm, _field_cm=field_cm, 
+    _generator_cm=generator_cm, _operator_cm=operator_cm,
+    _save_directory="./plots"
+)
+
+runner = SingleChannelFDSRunner(system_data, SingleChannelFDSUtility)
+
+# ==========================================
+# 3. The Hot-Loop (Hardware-Friendly Execution)
+# ==========================================
+print("Running Quantum Loop...")
+for tick in range(60):
+    # Phase 1: Wave Expansion (Generator searches paths and accumulates complex weights)
+    runner.next(apply_generator=True, steps=5)
+
+    # Phase 2: Observation & Collapse (Operator evaluates probability and forces a discrete state)
+    runner.next(apply_generator=False)
+
+runner.end(compile_csv=True)
+```
