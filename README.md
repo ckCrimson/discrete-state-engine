@@ -146,7 +146,7 @@ Component Storage (CS): Maintains a synchronized dual-state: the mapped Domain D
 Zero-Friction Hot Swapping
 Because the execution engine only interacts with the Component Storage via injected Fast References defined by the Contract, kernels are perfectly hot-swappable. A user can swap the default kernel for a custom backend without rewriting a single line of Domain logic.
 
-## 🚀 Quick Start (The Hello World of FDS)
+##  Quick Start (The Hello World of FDS)
 
 Despite the heavy data-oriented architecture under the hood, writing an FDS simulation in the Domain layer is completely object-oriented and user-friendly. 
 
