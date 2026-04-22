@@ -79,6 +79,7 @@ flowchart TD
 
     %% Component Manager Block
     subgraph Component Manager ["Component Manager"]
+        Constructor["Public Constructor API"]
         PublicAPI["Public API"]
         UtilAPI["Utility API"]
         UtilMethod["Utility Method"]
@@ -99,7 +100,10 @@ flowchart TD
 
     %% Inputs to CM
     Bridge --> PublicAPI
-    Contract --> UtilAPI
+    Contract --> Constructor
+
+    %% Initialization
+    Constructor -- "Initializes empty" --> Storage
 
     %% CM to Middle Layer
     PublicAPI -- "get Domain" --> Domain
