@@ -42,5 +42,5 @@ Notice the breathing pattern: The Generator expands the wave for 20 continuous s
 
 > 🖼️ **Expansion and Collapse Iterations:**
 > 
-> ![4D Wave Collapse](../plots/momentum_walker_collapse.gif)
+> ![4D Wave Collapse](particle_grid_simulator/test/operator/plots/4d_momentum_collapse.gif)
 > *A particle undergoing 3 macro-iterations. Each cycle consists of a 20-step wave expansion (Generator) followed by an instantaneous stochastic collapse (Operator).*

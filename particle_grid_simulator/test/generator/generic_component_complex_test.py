@@ -4,12 +4,14 @@ import numpy as np
 from numba import njit
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from matplotlib.animation import FuncAnimation, PillowWriter
 
 from particle_grid_simulator.src.field.kernel.numba.storage.complex_field_storage_v2 import \
     NumbaComplexFieldKernelStorage
 from particle_grid_simulator.src.field.kernel.numba.utility.complex_field_utility_v2 import NumbaComplexUtility
 from particle_grid_simulator.src.generator.kernel.numba.storage.complex_field_storage_v2 import \
     NumbaComplexCSRGeneratorStorage
+
 # ==========================================
 # DOMAIN IMPORTS
 # ==========================================
@@ -39,10 +41,6 @@ from particle_grid_simulator.src.generator.kernel.numba.translator.generic_trans
     GenericGeneratorTranslator
 from particle_grid_simulator.src.generator.kernel.numba.utility.generic_utility_v2 import GenericGeneratorKernelUtility
 
-# ==========================================
-# THE NEW COMPLEX DOD IMPORTS
-# Make sure these match the files you just created!
-# ==========================================
 
 # ==========================================
 # 1. PURE C-SPEED PHYSICS RULES (COMPLEX)
@@ -50,78 +48,93 @@ from particle_grid_simulator.src.generator.kernel.numba.utility.generic_utility_
 @njit(cache=True, fastmath=True)
 def phase_shift_transition(s_j: np.ndarray, s_i: np.ndarray) -> np.ndarray:
     """
-    Simulates quantum-like wave interference.
-    The phase rotates based on the direction of the random walk.
+    Simulates quantum-like wave interference with conserved probability.
     """
     dx = s_i[0] - s_j[0]
     dy = s_i[1] - s_j[1]
     theta = np.arctan2(dy, dx)
 
-    # Complex weight: Magnitude 1.0, Phase theta
-    c_weight = np.cos(theta) + 1j * np.sin(theta)
-    return np.array([c_weight], dtype=np.complex128)
+    # Scale amplitude by 1 / sqrt(8) to conserve probability across 8 neighbors
+    amplitude = 1.0 / np.sqrt(8.0)
 
+    # Complex weight: Magnitude 0.353, Phase theta
+    c_weight = amplitude * (np.cos(theta) + 1j * np.sin(theta))
+
+    return np.array([c_weight], dtype=np.complex128)
 
 @njit(cache=True, fastmath=True)
 def hardware_random_walker_neighbors(state_vec: np.ndarray) -> np.ndarray:
     x, y = state_vec[0], state_vec[1]
     return np.array([
         [x, y + 1.0], [x, y - 1.0], [x + 1.0, y + 1.0],
-        [x - 1.0, y - 1.0], [x + 1.0, y], [x - 1.0, y],[x + 1.0, y-1],[x - 1.0, y+1]
+        [x - 1.0, y - 1.0], [x + 1.0, y], [x - 1.0, y], [x + 1.0, y - 1], [x - 1.0, y + 1]
     ], dtype=np.float64)
 
 
 # ==========================================
-# 2. DUAL SUBPLOT VISUALIZATION
+# 2. GIF ANIMATION GENERATOR
 # ==========================================
-def plot_and_save_complex_field(states: np.ndarray, fields: np.ndarray, save_dir: str):
+def animate_and_save_complex_field(history: list, save_dir: str, max_steps: int):
+    print("\n🎬 Rendering Complex Field GIF...")
     abs_save_dir = os.path.normpath(save_dir)
     if not os.path.exists(abs_save_dir):
         os.makedirs(abs_save_dir)
 
-    Z = fields[:, 0]
-    magnitude = np.abs(Z)
-    phase = np.angle(Z)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+    fig.patch.set_facecolor('#050510')
 
-    # Filter out empty vacuum states so background phase noise doesn't ruin the plot
-    mask = magnitude > 1e-10
-    X = states[mask, 0]
-    Y = states[mask, 1]
-    mag_masked = magnitude[mask]
-    phase_masked = phase[mask]
+    # Setup Axes
+    for ax, title in zip([ax1, ax2], ["Magnitude $|Z|$ (Log)", "Phase Angle $\\theta$ (Radians)"]):
+        ax.set_facecolor('#050510')
+        ax.set_xlim(-max_steps - 2, max_steps + 2)
+        ax.set_ylim(-max_steps - 2, max_steps + 2)
+        ax.set_title(f"Complex Field: {title}", color='white', pad=15)
+        ax.set_aspect('equal')
+        ax.grid(True, color='#202030', linestyle='--', alpha=0.5)
+        ax.tick_params(colors='white')
 
-    if len(mag_masked) == 0:
-        print("⚠️ Warning: Field mass is zero. Nothing to plot.")
-        return
+    plt.suptitle("2D Complex Field Generation", fontsize=16, color='white')
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+    # Initialize empty scatters (Explicitly adding c=[])
+    sc1 = ax1.scatter([], [], c=[], cmap='magma', marker='s', s=25, norm=mcolors.LogNorm(vmin=1e-6, vmax=1e3))
+    sc2 = ax2.scatter([], [], c=[], cmap='twilight', marker='s', s=25, vmin=-np.pi, vmax=np.pi)
+    # Add Colorbars
+    cb1 = fig.colorbar(sc1, ax=ax1, fraction=0.046, pad=0.04)
+    cb1.ax.yaxis.set_tick_params(color='white')
+    cb2 = fig.colorbar(sc2, ax=ax2, fraction=0.046, pad=0.04)
+    cb2.ax.yaxis.set_tick_params(color='white')
 
-    # SUBPLOT 1: MAGNITUDE
-    sc1 = ax1.scatter(X, Y, c=mag_masked, cmap='magma', marker='s', s=25, norm=mcolors.LogNorm())
-    fig.colorbar(sc1, ax=ax1, label='Magnitude $|Z|$ (Log Scale)')
-    ax1.set_title("Complex Field: Magnitude")
-    ax1.set_aspect('equal')
-    ax1.grid(True, linestyle='--', alpha=0.2)
+    def update(frame):
+        states, fields = history[frame]
+        Z = fields[:, 0]
+        magnitude = np.abs(Z)
+        phase = np.angle(Z)
 
-    # SUBPLOT 2: PHASE
-    # 'twilight' is a cyclic colormap, perfect for mapping angles from -pi to pi
-    sc2 = ax2.scatter(X, Y, c=phase_masked, cmap='twilight', marker='s', s=25, vmin=-np.pi, vmax=np.pi)
-    fig.colorbar(sc2, ax=ax2, label='Phase Angle $\\theta$ (Radians)')
-    ax2.set_title("Complex Field: Phase")
-    ax2.set_aspect('equal')
-    ax2.grid(True, linestyle='--', alpha=0.2)
+        mask = magnitude > 1e-10
+        X = states[mask, 0]
+        Y = states[mask, 1]
+        mag_masked = magnitude[mask]
+        phase_masked = phase[mask]
 
-    plt.suptitle("2D Complex Field Random Walker (50 Steps)", fontsize=16)
+        if len(X) > 0:
+            sc1.set_offsets(np.c_[X, Y])
+            sc1.set_array(mag_masked)
 
-    # EXACT FILENAME REQUESTED
-    file_path = os.path.join(abs_save_dir, "complex_random_walker_test.png")
+            sc2.set_offsets(np.c_[X, Y])
+            sc2.set_array(phase_masked)
+
+        return sc1, sc2
+
+    # Animate and Save
+    ani = FuncAnimation(fig, update, frames=len(history), blit=False)
+    file_path = os.path.join(abs_save_dir, "complex_field_generation.gif")
 
     try:
-        plt.savefig(file_path, dpi=300, bbox_inches='tight')
+        ani.save(file_path, writer=PillowWriter(fps=6))
         plt.close('all')
-        print(f"✅ Complex Plot successfully saved to:\n   --> {file_path}")
+        print(f"✅ Complex GIF successfully saved to:\n   --> {file_path}")
     except Exception as e:
-        print(f"❌ Failed to save plot. Error: {e}")
+        print(f"❌ Failed to save GIF. Error: {e}")
 
 
 # ==========================================
@@ -129,22 +142,22 @@ def plot_and_save_complex_field(states: np.ndarray, fields: np.ndarray, save_dir
 # ==========================================
 def run_complex_field_test():
     print("1. Configuring Complex OOP Domain Blueprints...")
-    # NOTE: Algebra explicitly set to complex128
     algebra = FieldAlgebra(dimensions=1, dtype=np.complex128)
     initial_states = np.array([[0.0, 0.0]], dtype=np.float64)
     initial_fields = np.array([[1.0 + 0.0j]], dtype=np.complex128)
 
     topology = Topology(reachable_func=None, state_class=State, use_cache=True)
+    TOTAL_STEPS = 40
 
     generator_data = GenericMarkovianFieldGeneratorData(
         mapper=FieldMapper(algebra, State),
         topology=topology,
         transition_function=phase_shift_transition,
-        maximum_step_baking=50,
-        max_size=100000,
+        maximum_step_baking=TOTAL_STEPS + 10,
+        max_size=100_000,
         state_shape=(2,),
         implicit_norm=False,
-        explicit_norm=True
+        explicit_norm=False
     )
 
     print("2. Spinning up Complex Hardware Component Managers...")
@@ -160,8 +173,8 @@ def run_complex_field_test():
     )
     global_field_cm.fill(1.0 + 0.0j)
 
-    # ---> THE TOPOLOGY MANAGER (Stays Float64) <---
-    topology_contract = TopologyKernelDataContract(hardware_random_walker_neighbors, State, 100000, 2, np.float64)
+    # ---> THE TOPOLOGY MANAGER <---
+    topology_contract = TopologyKernelDataContract(hardware_random_walker_neighbors, State, 100_000, 2, np.float64)
     topology_cm = TopologyComponentManager.create_from_raw_data(
         topology_contract, NumbaTopologyStorage(topology_contract),
         NumbaTopologyTranslator(), NumbaTopologyUtility
@@ -182,8 +195,8 @@ def run_complex_field_test():
 
     # PHASE 1
     t_start = time.perf_counter()
-    print("   -> Expanding Topology Graph & Rebuilding CSR...")
-    topology_cm.warmup([State(initial_states[0])], steps=50)
+    print(f"   -> Expanding Topology Graph ({TOTAL_STEPS} steps)...")
+    topology_cm.warmup([State(initial_states[0])], steps=TOTAL_STEPS)
     print(f"   [Phase 1] Topology Warmup: {(time.perf_counter() - t_start) * 1000:.4f} ms")
 
     # PHASE 2
@@ -192,15 +205,19 @@ def run_complex_field_test():
     generator_cm.inject_environment(topology_cm, global_field_cm)
     print(f"   [Phase 2] Environment Injection: {(time.perf_counter() - t_start) * 1000:.4f} ms")
 
-    # PHASE 3
+    # PHASE 3: Loop step-by-step to record history for the GIF
+    print(f"   -> Executing {TOTAL_STEPS} steps (Recording History)...")
+    history = [(initial_states.copy(), initial_fields.copy())]
+
     t_start = time.perf_counter()
-    print("   -> Blasting 50 steps via Complex Ping-Pong Buffer...")
-    final_states, final_fields = generator_cm.generate_steps(steps=40)
-    print(f"   [Phase 3] Complex Field Generation: {(time.perf_counter() - t_start) * 1000:.4f} ms")
+    for _ in range(TOTAL_STEPS):
+        states, fields = generator_cm.generate_steps(steps=1)
+        history.append((states.copy(), fields.copy()))
+    print(f"   [Phase 3] Field Generation (Iterative): {(time.perf_counter() - t_start) * 1000:.4f} ms")
 
     # PLOT & SAVE
     save_directory = r"E:\Particle Field Simulation\particle_grid_simulator\test\generator\plot"
-    plot_and_save_complex_field(final_states, final_fields, save_directory)
+    animate_and_save_complex_field(history, save_directory, max_steps=TOTAL_STEPS)
 
 
 if __name__ == "__main__":

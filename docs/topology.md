@@ -46,6 +46,7 @@ Imagine a particle on a 2D infinite grid, starting at state $s=(0,0)$. The topol
 * **$F^3[s]$ (3-Step Frontier):** The particle forms a diamond-shaped perimeter exactly 3 units away from the origin. It cannot be at $(0,0)$ because 3 steps forces it outward.
 * **$B^3[s]$ (3-Step Basin):** The solid, filled-in diamond of every coordinate the particle could have touched over the course of those 3 steps, including backtracking to the origin.
 
-> 🖼️ **Visualizing the Wave:**
+> 🖼️ **Visualizing the State Space Expansion:**
 > 
-> *[Placeholder: Insert animated GIF here showing a single point recursively expanding its $F^l[s]$ outward tick-by-tick, turning into a hollow diamond/circle, alongside a second GIF showing the $B^l[s]$ filling in as a solid shape.]*
+> ![Topology Expansion](particle_grid_simulator/test/topology/plots/2d_topology_expansion.gif)
+> *Left: The hollow Multi-Step Frontier expanding like a wave. Right: The completely filled Multi-Step Basin representing all historical reachability.*

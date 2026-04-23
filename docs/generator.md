@@ -41,7 +41,7 @@ In our 2D Quantum Particle test (`run_complex_box_test`), the Generator expands 
 
 Below is the telemetry from the Generator mapped to a 2D grid. As the multi-step frontier ($F^l[s]$) pushes outward from the origin, the Field Algebra calculates the complex phase interactions, resulting in the visible interference fringes (ripples) before the wave eventually collapses.
 
-> 🖼️ **Quantum Wave Propagation & Interference:**
-> 
-> ![Complex Wave Propagation](../plots/quantum_propagation_collapse.gif)
+> **Quantum Wave Propagation & Interference:**
+>
+> ![Complex Wave Propagation](particle_grid_simulator/test/generator/plot/complex_field_generation.gif)
 > *The absolute square ($|\psi|^2$) of the complex probability wave as computed by the FDS Generator across multiple ticks.*
