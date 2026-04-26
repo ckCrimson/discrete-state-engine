@@ -27,7 +27,6 @@ _KERNEL_CACHE = {}
 
 
 def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field_dtype):
-    # FIX: Cache key now includes dtype to prevent Real/Complex collisions
     cache_key = (id(math_multiply), id(math_norm), id(transition_func), str(field_dtype))
     if cache_key in _KERNEL_CACHE:
         return _KERNEL_CACHE[cache_key]
@@ -39,7 +38,8 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field
             buf_B_states: np.ndarray, buf_B_fields: np.ndarray,
             state_coords: np.ndarray, edge_offsets: np.ndarray, edge_targets: np.ndarray,
             global_states: np.ndarray, global_fields: np.ndarray, global_norm_fields: np.ndarray,
-            do_implicit_norm: bool
+            do_implicit_norm: bool,
+            do_explicit_norm: bool  # FIX: Parameter restored
     ) -> int:
         current_active_count = active_count_A
         read_states = buf_A_states
@@ -57,20 +57,10 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field
         for i in range(current_active_count):
             read_ids[i] = _find_coord_id(read_states[i], state_coords)
 
-        # ---------------------------------------------------------
-        # PRE-ALLOCATION: Uses the passed-in field_dtype (complex128)
-        # ---------------------------------------------------------
-        # Inside _compiled_loop
-        # ---------------------------------------------------------
-        # PRE-ALLOCATION: Inherit type directly from the buffer
-        # ---------------------------------------------------------
         acc_fields = np.zeros((num_csr_nodes, field_dim), dtype=buf_A_fields.dtype)
         seen_nodes = np.zeros(num_csr_nodes, dtype=nb.boolean)
 
         for step in range(steps):
-            # FAST SPARSE CLEAR:
-            # Use 0 * read_fields[0,0] to ensure the 'Zero' is the correct type
-            # (Complex Zero vs Float Zero) without hardcoding.
             zero_val = read_fields[0, 0] * 0
 
             for i in range(num_csr_nodes):
@@ -79,6 +69,7 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field
                     for d in range(field_dim):
                         acc_fields[i, d] = zero_val
 
+            # Phase 1: Expansion & Accumulation
             for i in range(current_active_count):
                 state_id = read_ids[i]
                 if state_id == -1:
@@ -87,36 +78,52 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field
                 field_i = read_fields[i]
                 start_edge = edge_offsets[state_id]
                 end_edge = edge_offsets[state_id + 1]
+                s_j = state_coords[state_id]
 
+                # --- FIX: IMPLICIT NORM (Local Conservation) ---
+                total_local_mag = 0.0
+                if do_implicit_norm:
+                    for edge in range(start_edge, end_edge):
+                        target_state_id = edge_targets[edge]
+                        t_weight = transition_func(s_j, state_coords[target_state_id])
+                        env_field = math_multiply(field_i, global_fields[target_state_id])
+                        prop_field = math_multiply(env_field, t_weight)
+
+                        # Scalar magnitude calculation across vector dimensions
+                        for d in range(field_dim):
+                            total_local_mag += np.sqrt(prop_field[d].real ** 2 + prop_field[d].imag ** 2)
+
+                # Execute propagation
                 for edge in range(start_edge, end_edge):
                     target_state_id = edge_targets[edge]
-                    target_global_field = global_fields[target_state_id]
+                    t_weight = transition_func(s_j, state_coords[target_state_id])
+                    env_field = math_multiply(field_i, global_fields[target_state_id])
+                    prop_field = math_multiply(env_field, t_weight)
 
-                    s_j = state_coords[state_id]
-                    s_i = state_coords[target_state_id]
-
-                    t_weight = transition_func(s_j, s_i)
-                    env_field = math_multiply(field_i, target_global_field)
-                    propagated_field = math_multiply(env_field, t_weight)
-
-                    if do_implicit_norm:
-                        mag_sq = 0.0
+                    if do_implicit_norm and total_local_mag > 0:
                         for d in range(field_dim):
-                            # Explicit Born Rule calculation
-                            mag_sq += propagated_field[d].real ** 2 + propagated_field[d].imag ** 2
-                        n_val = np.sqrt(mag_sq)
-
-                        if n_val > 0:
-                            for d in range(field_dim):
-                                acc_fields[target_state_id, d] += propagated_field[d] / n_val
-                        else:
-                            for d in range(field_dim):
-                                acc_fields[target_state_id, d] += propagated_field[d]
+                            # Scalar division on vector index
+                            acc_fields[target_state_id, d] += prop_field[d] / total_local_mag
                     else:
                         for d in range(field_dim):
-                            acc_fields[target_state_id, d] += propagated_field[d]
+                            acc_fields[target_state_id, d] += prop_field[d]
 
                     seen_nodes[target_state_id] = True
+
+            # --- FIX: EXPLICIT NORM (Global Conservation) ---
+            if do_explicit_norm:
+                global_mag = 0.0
+                for node_idx in range(num_csr_nodes):
+                    if seen_nodes[node_idx]:
+                        for d in range(field_dim):
+                            global_mag += np.sqrt(acc_fields[node_idx, d].real ** 2 + acc_fields[node_idx, d].imag ** 2)
+
+                if global_mag > 0:
+                    for node_idx in range(num_csr_nodes):
+                        if seen_nodes[node_idx]:
+                            for d in range(field_dim):
+                                # Scalar division on vector index
+                                acc_fields[node_idx, d] = acc_fields[node_idx, d] / global_mag
 
             # Dense Compaction
             write_idx = 0
@@ -177,7 +184,8 @@ class GenericGeneratorKernelUtility(IGeneratorKernelUtility):
             global_states=fast_refs.global_states,
             global_fields=fast_refs.global_fields,
             global_norm_fields=fast_refs.global_normalized_fields,
-            do_implicit_norm=do_implicit_norm
+            do_implicit_norm=do_implicit_norm,
+            do_explicit_norm=do_explicit_norm  # FIX: Restored parameter pass
         )
 
         final_buffer_flag = 'A' if steps % 2 == 0 else 'B'
