@@ -24,3 +24,9 @@ dist/
 # *.png
 # *.gif
 # *.mp4
+
+# Ignore absolute path mistakes from scripts
+**/E\:*
+**/plots/*.csv
+**/plots/*.gif
+**/plots/*.png
