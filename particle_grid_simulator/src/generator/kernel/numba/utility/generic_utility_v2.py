@@ -1,30 +1,42 @@
 import numpy as np
 import numba as nb
-from typing import Callable, Any, Optional
+
+from typing import Callable, Any, Optional, Dict
 
 from particle_grid_simulator.src.generator.iterfaces.storage import GeneratorKernelFastRef
 from particle_grid_simulator.src.generator.iterfaces.utility import IGeneratorKernelUtility
 
+# ==========================================
+# 1. THE SPATIAL HASH MAP BUILDER
+# ==========================================
+def _build_numba_dict(state_coords: np.ndarray):
+    """
+    Python-space wrapper: Allocates the typed dictionary safely outside the JIT compiler.
+    Uses the `nb` alias directly to bypass IDE import confusion and namespace clashes.
+    """
+    key_ty = nb.types.Tuple((nb.types.float64, nb.types.float64, nb.types.float64))
+    val_ty = nb.types.int32
 
-@nb.njit(cache=True, fastmath=True)
-def _find_coord_id(target_vec: np.ndarray, array_to_search: np.ndarray) -> int:
-    dim = target_vec.shape[0]
-    for i in range(len(array_to_search)):
-        match = True
-        for d in range(dim):
-            if array_to_search[i][d] != target_vec[d]:
-                match = False
-                break
-        if match:
-            return i
-    return -1
+    # Safe allocation in Python using the global nb alias
+    coord_map = nb.typed.Dict.empty(key_type=key_ty, value_type=val_ty)
 
+    # Pass pointer to C-level for blazing fast population
+    _populate_dict(coord_map, state_coords)
+    return coord_map
+
+
+@nb.njit(fastmath=True)
+def _populate_dict(coord_map, state_coords: np.ndarray):
+    """C-space execution: Populates the pre-allocated map at native speed."""
+    for i in range(len(state_coords)):
+        key = (state_coords[i, 0], state_coords[i, 1], state_coords[i, 2])
+        coord_map[key] = nb.int32(i)
 
 # ==========================================
 # THE JIT FACTORY (Zero-Overhead Compilation)
 # ==========================================
 _KERNEL_CACHE = {}
-
+_MAP_CACHE = {}  # Caches the Spatial Hash Map so we only build it once
 
 def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field_dtype):
     cache_key = (id(math_multiply), id(math_norm), id(transition_func), str(field_dtype))
@@ -39,7 +51,8 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field
             state_coords: np.ndarray, edge_offsets: np.ndarray, edge_targets: np.ndarray,
             global_states: np.ndarray, global_fields: np.ndarray, global_norm_fields: np.ndarray,
             do_implicit_norm: bool,
-            do_explicit_norm: bool  # FIX: Parameter restored
+            do_explicit_norm: bool,
+            coord_map: Any
     ) -> int:
         current_active_count = active_count_A
         read_states = buf_A_states
@@ -54,20 +67,23 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field
         read_ids = np.empty(capacity, dtype=np.int32)
         write_ids = np.empty(capacity, dtype=np.int32)
 
-        for i in range(current_active_count):
-            read_ids[i] = _find_coord_id(read_states[i], state_coords)
+        # O(1) Dictionary Lookup
+        for i in nb.prange(current_active_count):
+            key = (read_states[i, 0], read_states[i, 1], read_states[i, 2])
+            if key in coord_map:
+                read_ids[i] = coord_map[key]
+            else:
+                read_ids[i] = -1
 
         acc_fields = np.zeros((num_csr_nodes, field_dim), dtype=buf_A_fields.dtype)
         seen_nodes = np.zeros(num_csr_nodes, dtype=nb.boolean)
 
+        # THE FIX: Track only the nodes we actually touch
+        active_target_nodes = np.empty(capacity, dtype=np.int32)
+
         for step in range(steps):
             zero_val = read_fields[0, 0] * 0
-
-            for i in range(num_csr_nodes):
-                if seen_nodes[i]:
-                    seen_nodes[i] = False
-                    for d in range(field_dim):
-                        acc_fields[i, d] = zero_val
+            active_target_count = 0
 
             # Phase 1: Expansion & Accumulation
             for i in range(current_active_count):
@@ -80,7 +96,6 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field
                 end_edge = edge_offsets[state_id + 1]
                 s_j = state_coords[state_id]
 
-                # --- FIX: IMPLICIT NORM (Local Conservation) ---
                 total_local_mag = 0.0
                 if do_implicit_norm:
                     for edge in range(start_edge, end_edge):
@@ -88,62 +103,64 @@ def get_compiled_ping_pong_loop(math_multiply, math_norm, transition_func, field
                         t_weight = transition_func(s_j, state_coords[target_state_id])
                         env_field = math_multiply(field_i, global_fields[target_state_id])
                         prop_field = math_multiply(env_field, t_weight)
-
-                        # Scalar magnitude calculation across vector dimensions
                         for d in range(field_dim):
                             total_local_mag += np.sqrt(prop_field[d].real ** 2 + prop_field[d].imag ** 2)
 
-                # Execute propagation
                 for edge in range(start_edge, end_edge):
                     target_state_id = edge_targets[edge]
                     t_weight = transition_func(s_j, state_coords[target_state_id])
                     env_field = math_multiply(field_i, global_fields[target_state_id])
                     prop_field = math_multiply(env_field, t_weight)
 
+                    # THE FIX: Log the node if it's the first time we've seen it this step
+                    if not seen_nodes[target_state_id]:
+                        seen_nodes[target_state_id] = True
+                        active_target_nodes[active_target_count] = target_state_id
+                        active_target_count += 1
+
                     if do_implicit_norm and total_local_mag > 0:
                         for d in range(field_dim):
-                            # Scalar division on vector index
                             acc_fields[target_state_id, d] += prop_field[d] / total_local_mag
                     else:
                         for d in range(field_dim):
                             acc_fields[target_state_id, d] += prop_field[d]
 
-                    seen_nodes[target_state_id] = True
-
-            # --- FIX: EXPLICIT NORM (Global Conservation) ---
+            # THE FIX: Only calculate global norm on the ~8,000 active nodes
             if do_explicit_norm:
                 global_mag = 0.0
-                for node_idx in range(num_csr_nodes):
-                    if seen_nodes[node_idx]:
-                        for d in range(field_dim):
-                            global_mag += np.sqrt(acc_fields[node_idx, d].real ** 2 + acc_fields[node_idx, d].imag ** 2)
+                for k in nb.prange(active_target_count):
+                    node_idx = active_target_nodes[k]
+                    for d in range(field_dim):
+                        global_mag += np.sqrt(acc_fields[node_idx, d].real ** 2 + acc_fields[node_idx, d].imag ** 2)
 
                 if global_mag > 0:
-                    for node_idx in range(num_csr_nodes):
-                        if seen_nodes[node_idx]:
-                            for d in range(field_dim):
-                                # Scalar division on vector index
-                                acc_fields[node_idx, d] = acc_fields[node_idx, d] / global_mag
+                    for k in nb.prange(active_target_count):
+                        node_idx = active_target_nodes[k]
+                        for d in range(field_dim):
+                            acc_fields[node_idx, d] = acc_fields[node_idx, d] / global_mag
 
-            # Dense Compaction
-            write_idx = 0
-            for node_idx in range(num_csr_nodes):
-                if seen_nodes[node_idx]:
-                    write_ids[write_idx] = node_idx
-                    write_states[write_idx] = state_coords[node_idx]
-                    for d in range(field_dim):
-                        write_fields[write_idx, d] = acc_fields[node_idx, d]
-                    write_idx += 1
+            # THE FIX: Only compact and clean the ~8,000 active nodes
+            for k in range(active_target_count):
+                node_idx = active_target_nodes[k]
 
-            current_active_count = write_idx
+                # Write to the next buffer
+                write_ids[k] = node_idx
+                write_states[k] = state_coords[node_idx]
+                for d in range(field_dim):
+                    write_fields[k, d] = acc_fields[node_idx, d]
 
-            # Pointer Swap
+                # Instantly clean up for the next step so we don't need the 150k zeroing loop
+                seen_nodes[node_idx] = False
+                for d in range(field_dim):
+                    acc_fields[node_idx, d] = zero_val
+
+            current_active_count = active_target_count
+
             temp_states, temp_fields, temp_ids = read_states, read_fields, read_ids
             read_states, read_fields, read_ids = write_states, write_fields, write_ids
             write_states, write_fields, write_ids = temp_states, temp_fields, temp_ids
 
         return current_active_count
-
     _KERNEL_CACHE[cache_key] = _compiled_loop
     return _compiled_loop
 
@@ -164,6 +181,13 @@ class GenericGeneratorKernelUtility(IGeneratorKernelUtility):
             **kwargs: Any
     ) -> str:
 
+        # 1. Retrieve or build the O(1) Numba Hash Map
+        map_id = id(fast_refs.state_coordinates)
+        if map_id not in _MAP_CACHE:
+            _MAP_CACHE[map_id] = _build_numba_dict(fast_refs.state_coordinates)
+        coord_map = _MAP_CACHE[map_id]
+
+        # 2. Get Compiled Engine
         compiled_kernel = get_compiled_ping_pong_loop(
             math_multiply=fast_refs.math_multiply,
             math_norm=fast_refs.math_norm,
@@ -171,6 +195,7 @@ class GenericGeneratorKernelUtility(IGeneratorKernelUtility):
             field_dtype=fast_refs.buffer_A_fields.dtype
         )
 
+        # 3. Execute
         final_count = compiled_kernel(
             steps=steps,
             buf_A_states=fast_refs.buffer_A_states,
@@ -185,7 +210,8 @@ class GenericGeneratorKernelUtility(IGeneratorKernelUtility):
             global_fields=fast_refs.global_fields,
             global_norm_fields=fast_refs.global_normalized_fields,
             do_implicit_norm=do_implicit_norm,
-            do_explicit_norm=do_explicit_norm  # FIX: Restored parameter pass
+            do_explicit_norm=do_explicit_norm,
+            coord_map=coord_map  # <-- Pass the map directly into the hardware loop
         )
 
         final_buffer_flag = 'A' if steps % 2 == 0 else 'B'

@@ -1,7 +1,6 @@
 # The concrete API for the Field Module
 from typing import Any, Iterable, Union, Optional, Callable
 import numpy as np
-from numba import njit
 
 from hpc_ecs_core.src.hpc_ecs_core.manager import BaseComponentManager
 from hpc_ecs_core.src.hpc_ecs_core.interfaces import SyncState

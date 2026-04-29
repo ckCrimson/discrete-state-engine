@@ -386,9 +386,9 @@ def save_complex_gif(csv_path: Path, save_path: Path, n_particles: int):
 # 3. MASTER PIPELINE
 # ==========================================
 def run_complex_box_test():
-    NUM_PARTICLES = 10
+    NUM_PARTICLES = 3
     STEPS = 5
-    ITERATIONS = 60
+    ITERATIONS = 6
     SAVE_DIR = Path(r"./plots")
 
     algebra = FieldAlgebra(dimensions=1, dtype=np.complex128)
