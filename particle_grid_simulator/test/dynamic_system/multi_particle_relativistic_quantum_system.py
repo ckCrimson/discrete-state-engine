@@ -37,10 +37,10 @@ from particle_grid_simulator.src.generator.iterfaces.storage import GeneratorKer
 # ==========================================
 # 1. SYSTEM CONFIGURATION (Fast Demo Baseline)
 # ==========================================
-NUM_PARTICLES = 5
-STEPS = 7
-ITERATIONS = 10
-BOX_RADIUS = 20
+NUM_PARTICLES = 25
+STEPS = 10
+ITERATIONS = 8
+BOX_RADIUS = 55
 PATH = "particle_grid_simulator/test/dynamic_system/plots"
 
 DELTA_POS = np.array([
@@ -48,16 +48,35 @@ DELTA_POS = np.array([
     [-1.0, 0.0],
     [0.0, 1.0],
     [0.0, -1.0],
-    [1.0, 1.0],
+
     [-1.0, 1.0],
-    [1.0, -1.0],
-    [-1.0, -1.0]
+    [1.0, -1.0]
 ], dtype=np.float64)
 
 
 # ==========================================
 # 2. THE KERNEL FACTORY
 # ==========================================
+
+# In your main script:
+def optimize_topology_layout(topo_cm):
+    # 1. Extract and sort coordinates spatially
+    raw_coords = list(topo_cm.fast_refs.handle_map)
+    # Sorting by Q then R ensures spatial neighbors are index-adjacent
+    sorted_coords = sorted(raw_coords, key=lambda x: (x[0], x[1], x[2]))
+
+    # 2. Rebuild the maps
+    topo_cm.fast_refs.handle_map.clear()
+    topo_cm.fast_refs.visited_map.clear()
+    for i, coord in enumerate(sorted_coords):
+        topo_cm.fast_refs.handle_map.append(coord)
+        topo_cm.fast_refs.visited_map[tuple(coord)] = np.int32(i)
+
+    # 3. Clear existing edges so the bridge recreates them with new indices
+    topo_cm.fast_refs.forward_starts.fill(0)
+    topo_cm.fast_refs.forward_counts.fill(0)
+    topo_cm.fast_refs.forward_edges.clear()
+
 def build_relativistic_kernels(deltas: np.ndarray):
     n_neighbors = len(deltas)
     norm_scalar = 1.0 / np.sqrt(n_neighbors)
@@ -228,6 +247,22 @@ def run_relativistic_multi_particle():
 
     # --- PHASE 2: EXECUTION ---
     print(f"[*] Starting Relativistic Execution Loop ({ITERATIONS} iterations)...")
+
+    # --- JIT WARMUP (DO NOT TIME THIS) ---
+    print("[*] Warming up engine...")
+    gen_cm.clear()
+    # Small dummy workload to trigger LLVM compilation
+    dummy_p = np.zeros((1, 3))
+    gen_cm.load_initial_state(dummy_p, np.ones((1, 1), dtype=np.complex128))
+    _ = gen_cm.generate_steps(STEPS)  # Warmup the multi-step path
+
+    # Warmup the collapse kernel
+    _ = sequential_relativistic_collapse(
+        np.zeros(3), np.zeros((1, 3)), np.zeros((1, 1), dtype=np.complex128),
+        np.zeros((1, 2)), 0, DELTA_POS, 1
+    )
+    gen_cm.clear()
+
     exec_start = time.time()
 
     history_wave = []
@@ -280,6 +315,7 @@ def run_relativistic_multi_particle():
 
 
 def animate_relativistic_walk(history_wave, history_particles, deltas, steps, iterations, path):
+
     fig, ax = plt.subplots(figsize=(10, 10))
 
     # Calculate global bounds for consistent axis scaling

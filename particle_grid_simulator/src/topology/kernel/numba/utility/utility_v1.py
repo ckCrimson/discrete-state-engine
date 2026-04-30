@@ -6,6 +6,7 @@ from typing import Iterable, Callable, Any
 
 from particle_grid_simulator.src.topology.interfaces.utility import ITopologyUtility
 
+
 # ==========================================
 # FAST PATH: MULTI-STEP FRONTIER KERNEL
 # ==========================================
@@ -43,6 +44,7 @@ def _njit_ping_pong_frontier(
             buffer_a.append(item)
 
     return buffer_a
+
 
 # ==========================================
 # FAST PATH: MULTI-STEP BASIN KERNEL
@@ -88,6 +90,93 @@ def _njit_ping_pong_basin(
 
     return basin_out
 
+
+# ==========================================
+# NEW FAST PATH: GRAPH BUILDER CORE
+# ==========================================
+@njit(fastmath=True)
+def _njit_ensure_graph_built_core(
+        visited_map, handle_map,
+        forward_starts, forward_counts, forward_edges, reverse_edges,
+        neighbour_func, start_vector, target_steps, steps_prepared, seen_array
+):
+    # Fast C-struct Tuple hashing for 3D coordinate states
+    s_tuple = (start_vector[0], start_vector[1], start_vector[2])
+
+    if s_tuple not in visited_map:
+        new_idx = np.int32(len(handle_map))
+        visited_map[s_tuple] = new_idx
+        handle_map.append(start_vector)
+
+    start_idx = visited_map[s_tuple]
+
+    if steps_prepared >= target_steps:
+        return start_idx, steps_prepared
+
+    current_frontier = List.empty_list(numba.types.int32)
+    current_frontier.append(start_idx)
+
+    for step in range(0, target_steps):
+        next_frontier = List.empty_list(numba.types.int32)
+
+        for i in range(len(current_frontier)):
+            current_idx = current_frontier[i]
+
+            # If node is already processed, just follow its edges
+            if forward_counts[current_idx] > 0:
+                start_edge = forward_starts[current_idx]
+                count = forward_counts[current_idx]
+                for j in range(count):
+                    n_idx = forward_edges[start_edge + j]
+                    if forward_counts[n_idx] == 0:
+                        next_frontier.append(n_idx)
+                continue
+
+            # Unexplored Node: Call the neighbor function
+            state_vec = handle_map[current_idx]
+            neighbors = neighbour_func(state_vec)
+
+            forward_starts[current_idx] = np.int32(len(forward_edges))
+            forward_counts[current_idx] = np.int32(len(neighbors))
+
+            for n_idx_iter in range(len(neighbors)):
+                n_vec = neighbors[n_idx_iter]
+                # Fast unpacking avoids Numba object overhead
+                n_tuple = (n_vec[0], n_vec[1], n_vec[2])
+
+                if n_tuple not in visited_map:
+                    n_idx_new = np.int32(len(handle_map))
+                    visited_map[n_tuple] = n_idx_new
+                    handle_map.append(n_vec)
+                else:
+                    n_idx_new = visited_map[n_tuple]
+
+                forward_edges.append(n_idx_new)
+                reverse_edges.append(np.int32(current_idx))
+
+                if forward_counts[n_idx_new] == 0:
+                    next_frontier.append(n_idx_new)
+
+        current_frontier.clear()
+
+        if len(next_frontier) > 0:
+            # High-performance deduplication using pre-allocated memory
+            for i in range(len(next_frontier)):
+                n_idx = next_frontier[i]
+                if not seen_array[n_idx]:
+                    seen_array[n_idx] = True
+                    current_frontier.append(n_idx)
+
+            # O(K) Cleanup: Only clear the booleans we actually flipped
+            for i in range(len(current_frontier)):
+                seen_array[current_frontier[i]] = False
+        else:
+            break
+
+    new_steps = max(steps_prepared, target_steps)
+    return start_idx, new_steps
+
+
 class NumbaTopologyUtility(ITopologyUtility):
     """
     STATELESS UTILITY: Purely functional graph execution.
@@ -96,7 +185,7 @@ class NumbaTopologyUtility(ITopologyUtility):
     """
 
     # ==========================================
-    # INTERNAL: THE GRAPH BUILDER
+    # INTERNAL: THE GRAPH BUILDER (Refactored)
     # ==========================================
     @staticmethod
     def _ensure_graph_built(
@@ -105,69 +194,22 @@ class NumbaTopologyUtility(ITopologyUtility):
             start_vector: np.ndarray,
             target_steps: int
     ) -> int:
-        start_tuple = tuple(start_vector)
+        # Delegate directly to the LLVM-compiled C-Kernel
+        start_idx, new_steps_prepared = _njit_ensure_graph_built_core(
+            fast_ref.visited_map,
+            fast_ref.handle_map,
+            fast_ref.forward_starts,
+            fast_ref.forward_counts,
+            fast_ref.forward_edges,
+            fast_ref.reverse_edges,
+            neighbour_func,
+            start_vector,
+            target_steps,
+            fast_ref.steps_prepared,
+            fast_ref.seen_array  # Using your existing buffer instead of allocating np.zeros
+        )
 
-        if start_tuple not in fast_ref.visited_map:
-            new_idx = np.int32(len(fast_ref.handle_map))
-            fast_ref.visited_map[start_tuple] = new_idx
-            fast_ref.handle_map.append(start_vector)
-
-        start_idx = fast_ref.visited_map[start_tuple]
-        if fast_ref.steps_prepared >= target_steps:
-            return start_idx
-
-        current_frontier = List.empty_list(numba.types.int32)
-        current_frontier.append(np.int32(start_idx))
-
-        for step in range(0, target_steps):
-            next_frontier = List.empty_list(numba.types.int32)
-
-            for i in range(len(current_frontier)):
-                current_idx = current_frontier[i]
-
-                if fast_ref.forward_counts[current_idx] > 0:
-                    start_edge = fast_ref.forward_starts[current_idx]
-                    count = fast_ref.forward_counts[current_idx]
-                    for j in range(count):
-                        n_idx = fast_ref.forward_edges[start_edge + j]
-                        if fast_ref.forward_counts[n_idx] == 0:
-                            next_frontier.append(np.int32(n_idx))
-                    continue
-
-                state_vec = fast_ref.handle_map[current_idx]
-                neighbors = neighbour_func(state_vec)
-
-                fast_ref.forward_starts[current_idx] = np.int32(len(fast_ref.forward_edges))
-                fast_ref.forward_counts[current_idx] = np.int32(len(neighbors))
-
-                for n_vec in neighbors:
-                    n_tuple = tuple(n_vec)
-
-                    if n_tuple not in fast_ref.visited_map:
-                        n_idx = np.int32(len(fast_ref.handle_map))
-                        fast_ref.visited_map[n_tuple] = n_idx
-                        fast_ref.handle_map.append(n_vec)
-                    else:
-                        n_idx = fast_ref.visited_map[n_tuple]
-
-                    fast_ref.forward_edges.append(np.int32(n_idx))
-                    fast_ref.reverse_edges.append(np.int32(current_idx))
-
-                    if fast_ref.forward_counts[n_idx] == 0:
-                        next_frontier.append(np.int32(n_idx))
-
-            current_frontier.clear()
-            if len(next_frontier) > 0:
-                is_queued = np.zeros(len(fast_ref.handle_map), dtype=np.bool_)
-                for i in range(len(next_frontier)):
-                    n_idx = next_frontier[i]
-                    if not is_queued[n_idx]:
-                        is_queued[n_idx] = True
-                        current_frontier.append(np.int32(n_idx))
-            else:
-                break
-
-        fast_ref.steps_prepared = max(fast_ref.steps_prepared, target_steps)
+        fast_ref.steps_prepared = new_steps_prepared
         return start_idx
 
     # ==========================================
@@ -190,7 +232,6 @@ class NumbaTopologyUtility(ITopologyUtility):
             state_vector_in: np.ndarray,
             steps: int
     ) -> Iterable[np.ndarray]:
-
         start_idx = NumbaTopologyUtility._ensure_graph_built(
             fast_ref, neighbour_func, state_vector_in, steps
         )
@@ -210,7 +251,6 @@ class NumbaTopologyUtility(ITopologyUtility):
             state_vector_in: np.ndarray,
             steps: int
     ) -> Iterable[np.ndarray]:
-
         start_idx = NumbaTopologyUtility._ensure_graph_built(
             fast_ref, neighbour_func, state_vector_in, steps
         )
