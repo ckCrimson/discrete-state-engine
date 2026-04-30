@@ -100,7 +100,10 @@ def _njit_ensure_graph_built_core(
         forward_starts, forward_counts, forward_edges, reverse_edges,
         neighbour_func, start_vector, target_steps, steps_prepared, seen_array
 ):
-    # Fast C-struct Tuple hashing for 3D coordinate states
+    # FIX: The ping-pong kernel leaves seen_array dirty!
+    # We MUST wipe it clean before relying on it for deduplication.
+    seen_array[:] = False
+
     s_tuple = (start_vector[0], start_vector[1], start_vector[2])
 
     if s_tuple not in visited_map:
@@ -122,7 +125,6 @@ def _njit_ensure_graph_built_core(
         for i in range(len(current_frontier)):
             current_idx = current_frontier[i]
 
-            # If node is already processed, just follow its edges
             if forward_counts[current_idx] > 0:
                 start_edge = forward_starts[current_idx]
                 count = forward_counts[current_idx]
@@ -132,7 +134,6 @@ def _njit_ensure_graph_built_core(
                         next_frontier.append(n_idx)
                 continue
 
-            # Unexplored Node: Call the neighbor function
             state_vec = handle_map[current_idx]
             neighbors = neighbour_func(state_vec)
 
@@ -141,7 +142,6 @@ def _njit_ensure_graph_built_core(
 
             for n_idx_iter in range(len(neighbors)):
                 n_vec = neighbors[n_idx_iter]
-                # Fast unpacking avoids Numba object overhead
                 n_tuple = (n_vec[0], n_vec[1], n_vec[2])
 
                 if n_tuple not in visited_map:
@@ -160,14 +160,12 @@ def _njit_ensure_graph_built_core(
         current_frontier.clear()
 
         if len(next_frontier) > 0:
-            # High-performance deduplication using pre-allocated memory
             for i in range(len(next_frontier)):
                 n_idx = next_frontier[i]
                 if not seen_array[n_idx]:
                     seen_array[n_idx] = True
                     current_frontier.append(n_idx)
 
-            # O(K) Cleanup: Only clear the booleans we actually flipped
             for i in range(len(current_frontier)):
                 seen_array[current_frontier[i]] = False
         else:
@@ -178,15 +176,6 @@ def _njit_ensure_graph_built_core(
 
 
 class NumbaTopologyUtility(ITopologyUtility):
-    """
-    STATELESS UTILITY: Purely functional graph execution.
-    Operates strictly on the FastRef payload and compiled function pointers.
-    Zero OOP state is held in this class.
-    """
-
-    # ==========================================
-    # INTERNAL: THE GRAPH BUILDER (Refactored)
-    # ==========================================
     @staticmethod
     def _ensure_graph_built(
             fast_ref: Any,
@@ -194,7 +183,6 @@ class NumbaTopologyUtility(ITopologyUtility):
             start_vector: np.ndarray,
             target_steps: int
     ) -> int:
-        # Delegate directly to the LLVM-compiled C-Kernel
         start_idx, new_steps_prepared = _njit_ensure_graph_built_core(
             fast_ref.visited_map,
             fast_ref.handle_map,
@@ -206,15 +194,12 @@ class NumbaTopologyUtility(ITopologyUtility):
             start_vector,
             target_steps,
             fast_ref.steps_prepared,
-            fast_ref.seen_array  # Using your existing buffer instead of allocating np.zeros
+            fast_ref.seen_array
         )
 
         fast_ref.steps_prepared = new_steps_prepared
         return start_idx
 
-    # ==========================================
-    # API IMPLEMENTATION
-    # ==========================================
     @staticmethod
     def get_reachable(
             fast_ref: Any,
@@ -284,9 +269,6 @@ class NumbaTopologyUtility(ITopologyUtility):
                 fast_ref, neighbour_func, state_vector_in, steps
             )
 
-    # ==========================================
-    # API IMPLEMENTATION: BACKWARD TRAVERSAL (REACHING)
-    # ==========================================
     @staticmethod
     def get_reaching(
             fast_ref: Any,
