@@ -11,10 +11,6 @@ FDS is a modular engine designed to simulate multi-entity dynamic systems where 
 Systems are designed in a rich, human-friendly **Domain layer**, then translated via strict contracts into **Data-Oriented Kernels** for blistering, hardware-friendly execution. By bypassing the Python GIL and structuring memory into contiguous C-arrays, FDS achieves sub-second batch processing for complex path integrals and dense branching.
 
 ---
-## Live Demos
-* **[Relativistic Quantum Walk](particle_grid_simulator/demos/relativistic_quantum_walk.ipynb):** 
-  Simulates multi-particle wave-function collapse on a discrete hexagonal topology. 
-  Features sub-250ms physics execution for 40k+ states using Numba-compiled kernels.
 
 ## Visual Proof: One Pipeline, Infinite Domains
 
@@ -28,6 +24,14 @@ Because FDS separates the physics (Domain) from the execution (Kernel), you can 
 *Entities reacting to hard topological boundaries and classical gradients.* | *Entities experiencing phase-shift interference and Born Rule wave collapse.*
 
 > **Note:** Both simulations above are executed through the exact same FDS pipeline at C-level speeds.
+
+##️ Interactive Research Demo
+
+To verify the performance of the FDS Engine, you can run the core relativistic simulation directly in the browser. This demo utilizes the full Numba-accelerated pipeline to achieve sub-250ms physics ticks.
+
+**[Relativistic Quantum Walk]** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1ilXh1Z-xg83XilleJGA4lG8OXFCWFaR8?usp=sharing)
+
+> **Note:** The Colab link pulls the latest code from the `main` branch. Ensure you select a "T4 GPU" or "High-RAM" runtime for the largest simulations, though the CPU-based Numba kernels drive the primary performance.
 
 ## The Field Dynamic System (FDS)
 
