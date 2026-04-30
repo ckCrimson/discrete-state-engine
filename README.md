@@ -30,9 +30,9 @@ Because FDS separates the physics (Domain) from the execution (Kernel), you can 
 To verify the performance of the FDS Engine, you can run the core relativistic simulation directly in the browser. This demo utilizes the full Numba-accelerated pipeline to achieve sub-250ms physics ticks.
 
 **[Relativistic Quantum Walk]** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1ilXh1Z-xg83XilleJGA4lG8OXFCWFaR8?usp=sharing)
-
-![FDS Relativistic Simulation](particle_grid_simulator/test/dynamic_system/plots/relativistic_field_analysis.gif)
-
+<p align="center">
+<img src="particle_grid_simulator/test/dynamic_system/plots/relativistic_field_analysis.gif" width="400" height ="400">
+</p>
 > **Note:** The Colab link pulls the latest code from the `main` branch. Ensure you select a "T4 GPU" or "High-RAM" runtime for the largest simulations, though the CPU-based Numba kernels drive the primary performance.
 
 ## The Field Dynamic System (FDS)
