@@ -11,6 +11,10 @@ FDS is a modular engine designed to simulate multi-entity dynamic systems where 
 Systems are designed in a rich, human-friendly **Domain layer**, then translated via strict contracts into **Data-Oriented Kernels** for blistering, hardware-friendly execution. By bypassing the Python GIL and structuring memory into contiguous C-arrays, FDS achieves sub-second batch processing for complex path integrals and dense branching.
 
 ---
+## Live Demos
+* **[Relativistic Quantum Walk](particle_grid_simulator/demos/relativistic_quantum_walk.ipynb):** 
+  Simulates multi-particle wave-function collapse on a discrete hexagonal topology. 
+  Features sub-250ms physics execution for 40k+ states using Numba-compiled kernels.
 
 ## Visual Proof: One Pipeline, Infinite Domains
 
