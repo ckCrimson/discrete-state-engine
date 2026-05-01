@@ -40,7 +40,7 @@ from particle_grid_simulator.src.operator.kernel.numba.utility.kernel_v1 import 
 @njit(fastmath=True)
 def hardware_neighbors(state_vec: np.ndarray) -> np.ndarray:
     x, y = state_vec[0], state_vec[1]
-    return np.array([[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]], dtype=np.float64)
+    return np.array([[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1],[x+1,y+1],[x-1,y-1]], dtype=np.float64)
 
 
 @njit(fastmath=True)
