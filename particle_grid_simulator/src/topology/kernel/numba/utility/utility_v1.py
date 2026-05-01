@@ -92,87 +92,117 @@ def _njit_ping_pong_basin(
 
 
 # ==========================================
-# NEW FAST PATH: GRAPH BUILDER CORE
+# FACTORY COMPILER (THE BULLETPROOF FIX)
 # ==========================================
-@njit(fastmath=True)
-def _njit_ensure_graph_built_core(
-        visited_map, handle_map,
-        forward_starts, forward_counts, forward_edges, reverse_edges,
-        neighbour_func, start_vector, target_steps, steps_prepared, seen_array
-):
-    # FIX: The ping-pong kernel leaves seen_array dirty!
-    # We MUST wipe it clean before relying on it for deduplication.
-    seen_array[:] = False
+_KERNEL_CACHE = {}
 
-    s_tuple = (start_vector[0], start_vector[1], start_vector[2])
 
-    if s_tuple not in visited_map:
-        new_idx = np.int32(len(handle_map))
-        visited_map[s_tuple] = new_idx
-        handle_map.append(start_vector)
+def _get_or_compile_core_kernel(dim: int):
+    """
+    Dynamically compiles the exact kernel needed for 1D, 2D, or 3D
+    without relying on any deprecated Numba extensions.
+    """
+    if dim in _KERNEL_CACHE:
+        return _KERNEL_CACHE[dim]
 
-    start_idx = visited_map[s_tuple]
+    @njit(fastmath=True)
+    def _dynamic_graph_core(
+            visited_map, handle_map,
+            forward_starts, forward_counts, forward_edges, reverse_edges,
+            neighbour_func, start_vector, target_steps, steps_prepared, seen_array
+    ):
+        seen_array[:] = False
 
-    if steps_prepared >= target_steps:
-        return start_idx, steps_prepared
+        # --- DYNAMIC TUPLE EXTRACTION ---
+        # Numba performs dead-code elimination here at compile time!
+        if dim == 1:
+            s_tuple = (start_vector[0],)
+        elif dim == 2:
+            s_tuple = (start_vector[0], start_vector[1])
+        elif dim == 3:
+            s_tuple = (start_vector[0], start_vector[1], start_vector[2])
+        else:
+            s_tuple = (start_vector[0],)
 
-    current_frontier = List.empty_list(numba.types.int32)
-    current_frontier.append(start_idx)
+        if s_tuple not in visited_map:
+            new_idx = np.int32(len(handle_map))
+            visited_map[s_tuple] = new_idx
+            handle_map.append(start_vector)
 
-    for step in range(0, target_steps):
-        next_frontier = List.empty_list(numba.types.int32)
+        start_idx = visited_map[s_tuple]
 
-        for i in range(len(current_frontier)):
-            current_idx = current_frontier[i]
+        if steps_prepared >= target_steps:
+            return start_idx, steps_prepared
 
-            if forward_counts[current_idx] > 0:
-                start_edge = forward_starts[current_idx]
-                count = forward_counts[current_idx]
-                for j in range(count):
-                    n_idx = forward_edges[start_edge + j]
-                    if forward_counts[n_idx] == 0:
-                        next_frontier.append(n_idx)
-                continue
+        current_frontier = List.empty_list(numba.types.int32)
+        current_frontier.append(start_idx)
 
-            state_vec = handle_map[current_idx]
-            neighbors = neighbour_func(state_vec)
-
-            forward_starts[current_idx] = np.int32(len(forward_edges))
-            forward_counts[current_idx] = np.int32(len(neighbors))
-
-            for n_idx_iter in range(len(neighbors)):
-                n_vec = neighbors[n_idx_iter]
-                n_tuple = (n_vec[0], n_vec[1], n_vec[2])
-
-                if n_tuple not in visited_map:
-                    n_idx_new = np.int32(len(handle_map))
-                    visited_map[n_tuple] = n_idx_new
-                    handle_map.append(n_vec)
-                else:
-                    n_idx_new = visited_map[n_tuple]
-
-                forward_edges.append(n_idx_new)
-                reverse_edges.append(np.int32(current_idx))
-
-                if forward_counts[n_idx_new] == 0:
-                    next_frontier.append(n_idx_new)
-
-        current_frontier.clear()
-
-        if len(next_frontier) > 0:
-            for i in range(len(next_frontier)):
-                n_idx = next_frontier[i]
-                if not seen_array[n_idx]:
-                    seen_array[n_idx] = True
-                    current_frontier.append(n_idx)
+        for step in range(0, target_steps):
+            next_frontier = List.empty_list(numba.types.int32)
 
             for i in range(len(current_frontier)):
-                seen_array[current_frontier[i]] = False
-        else:
-            break
+                current_idx = current_frontier[i]
 
-    new_steps = max(steps_prepared, target_steps)
-    return start_idx, new_steps
+                if forward_counts[current_idx] > 0:
+                    start_edge = forward_starts[current_idx]
+                    count = forward_counts[current_idx]
+                    for j in range(count):
+                        n_idx = forward_edges[start_edge + j]
+                        if forward_counts[n_idx] == 0:
+                            next_frontier.append(n_idx)
+                    continue
+
+                state_vec = handle_map[current_idx]
+                neighbors = neighbour_func(state_vec)
+
+                forward_starts[current_idx] = np.int32(len(forward_edges))
+                forward_counts[current_idx] = np.int32(len(neighbors))
+
+                for n_idx_iter in range(len(neighbors)):
+                    n_vec = neighbors[n_idx_iter]
+
+                    # --- DYNAMIC TUPLE EXTRACTION FOR NEIGHBORS ---
+                    if dim == 1:
+                        n_tuple = (n_vec[0],)
+                    elif dim == 2:
+                        n_tuple = (n_vec[0], n_vec[1])
+                    elif dim == 3:
+                        n_tuple = (n_vec[0], n_vec[1], n_vec[2])
+                    else:
+                        n_tuple = (n_vec[0],)
+
+                    if n_tuple not in visited_map:
+                        n_idx_new = np.int32(len(handle_map))
+                        visited_map[n_tuple] = n_idx_new
+                        handle_map.append(n_vec)
+                    else:
+                        n_idx_new = visited_map[n_tuple]
+
+                    forward_edges.append(n_idx_new)
+                    reverse_edges.append(np.int32(current_idx))
+
+                    if forward_counts[n_idx_new] == 0:
+                        next_frontier.append(n_idx_new)
+
+            current_frontier.clear()
+
+            if len(next_frontier) > 0:
+                for i in range(len(next_frontier)):
+                    n_idx = next_frontier[i]
+                    if not seen_array[n_idx]:
+                        seen_array[n_idx] = True
+                        current_frontier.append(n_idx)
+
+                for i in range(len(current_frontier)):
+                    seen_array[current_frontier[i]] = False
+            else:
+                break
+
+        new_steps = max(steps_prepared, target_steps)
+        return start_idx, new_steps
+
+    _KERNEL_CACHE[dim] = _dynamic_graph_core
+    return _dynamic_graph_core
 
 
 class NumbaTopologyUtility(ITopologyUtility):
@@ -183,7 +213,12 @@ class NumbaTopologyUtility(ITopologyUtility):
             start_vector: np.ndarray,
             target_steps: int
     ) -> int:
-        start_idx, new_steps_prepared = _njit_ensure_graph_built_core(
+        # FIX: We dynamically check the dimension in pure Python and
+        # fetch the perfectly compiled Numba kernel for that specific dimension.
+        dim = len(start_vector)
+        core_kernel = _get_or_compile_core_kernel(dim)
+
+        start_idx, new_steps_prepared = core_kernel(
             fast_ref.visited_map,
             fast_ref.handle_map,
             fast_ref.forward_starts,

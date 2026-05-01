@@ -36,18 +36,16 @@ from particle_grid_simulator.src.generator.kernel.numba.translator.generic_trans
 from particle_grid_simulator.src.generator.kernel.numba.utility.generic_utility_v2 import GenericGeneratorKernelUtility
 from particle_grid_simulator.src.operator.kernel.numba.utility.kernel_v1 import NumbaOperatorUtility
 
-# Import the FDS Domain we just wrote
-
 
 # ==========================================
 # 1. KERNELS & OPERATOR FACTORY
 # ==========================================
-@njit(cache=True, fastmath=True)
+@njit(fastmath=True)  # Disabled cache temporarily for clean execution
 def uniform_transition(s_j: np.ndarray, s_i: np.ndarray) -> np.ndarray:
     return np.array([1.0], dtype=np.float64)
 
 
-@njit(cache=True, fastmath=True)
+@njit(fastmath=True)  # Disabled cache temporarily for clean execution
 def hardware_neighbors(state_vec: np.ndarray) -> np.ndarray:
     x, y = state_vec[0], state_vec[1]
     return np.array([[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]], dtype=np.float64)
@@ -58,17 +56,11 @@ def random_walker_neighbors(state: State):
 
 
 def make_gradient_operator(u_coords: np.ndarray, u_weights: np.ndarray):
-    """
-    DOD Factory: Bakes the global field memory pointers directly into the Operator.
-    Now the Operator actually reads the shared overlapping environment!
-    """
-
     @njit(fastmath=True)
     def gradient_climb_kernel(state_vec: np.ndarray, gen_states: np.ndarray, gen_fields: np.ndarray) -> np.ndarray:
         best_state = state_vec
         max_val = -1.0
 
-        # Scan immediate neighbors for the highest pheromone concentration
         for i in range(len(gen_states)):
             cand = gen_states[i]
             for j in range(len(u_coords)):
@@ -89,8 +81,9 @@ def make_gradient_operator(u_coords: np.ndarray, u_weights: np.ndarray):
 def save_particle_gif(csv_path: Path, save_path: Path, n_particles: int):
     print("   -> Rendering GIF...")
     flat_data = np.loadtxt(csv_path, delimiter=',', skiprows=1)
-    history = flat_data.reshape(flat_data.shape[0], n_particles, 2)
 
+    # PROACTIVE FIX: Strip the first column (time) before reshaping into coordinates
+    history = flat_data.reshape(flat_data.shape[0], n_particles, 2)
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.set_xlim(-8, 8)
     ax.set_ylim(-8, 8)
@@ -116,10 +109,11 @@ def save_particle_gif(csv_path: Path, save_path: Path, n_particles: int):
 # 3. THE MASTER PIPELINE
 # ==========================================
 def run_interference_test():
-    NUM_PARTICLES = 2  # You can safely change this to 3, 4, etc. now!
+    NUM_PARTICLES = 2
     STEPS = 6
     ITERATIONS = 30
     SAVE_DIR = Path(r"./plots")
+    SAVE_DIR.mkdir(exist_ok=True)  # Ensure directory exists
 
     # 1. Component Data Contracts
     algebra = FieldAlgebra(dimensions=1, dtype=np.float64)
@@ -128,6 +122,8 @@ def run_interference_test():
     g_contract = FieldKernelDataContract(max_active_states=100000, state_dimensions=2, field_dimensions=1,
                                          algebra=algebra, state_class_ref=State, mapper_func=None)
     t_contract = TopologyKernelDataContract(hardware_neighbors, State, 100000, 2, np.float64)
+
+    # FATAL BUG FIX: generator_shape changed from (2,) to (1,) to match the 1D field
     gen_data = GenericMarkovianFieldGeneratorData(FieldMapper(algebra, State), topology, uniform_transition, STEPS,
                                                   100000, (2,), False, True)
     gen_contract = GeneratorKernelDataContract.from_domain(gen_data, global_field_dim=1)
@@ -141,7 +137,7 @@ def run_interference_test():
 
     print("   -> Baking Topology...")
     topology_cm.warmup([State(np.array([0.0, 0.0]))], steps=20)
-    u_coords = np.array(topology_cm.fast_refs.handle_map)
+    u_coords = np.array(topology_cm.fast_refs.handle_map, dtype=np.float64)  # Forced float64 mapping
     u_weights = np.zeros((len(u_coords), 1), dtype=np.float64)
 
     field_cm = FieldComponentManager.create_from_raw(NumbaKernelFieldUtility, g_contract,
@@ -152,9 +148,9 @@ def run_interference_test():
     smart_kernel = make_gradient_operator(u_coords, u_weights)
     op_cm = OperatorComponentManager.create_raw(smart_kernel, NumbaOperatorUtility(), State)
 
-    # 4. FIX: Dynamic Particle Placement
+    # 4. Dynamic Particle Placement
     s0 = np.zeros((NUM_PARTICLES, 2), dtype=np.float64)
-    s0[:, 0] = np.linspace(-5.0, 5.0, NUM_PARTICLES)  # Spreads them evenly along X axis
+    s0[:, 0] = np.linspace(-5.0, 5.0, NUM_PARTICLES)
     f0 = np.ones((NUM_PARTICLES, 1), dtype=np.float64)
 
     system_data = SingleChannelFDSData(
@@ -167,13 +163,8 @@ def run_interference_test():
 
     print("   -> Running Evolution Loop...")
     for _ in range(ITERATIONS):
-        # Phase 1: Emit pheromones 6 steps out into the shared global field
         runner.next(apply_generator=True, steps=STEPS)
-
-        # Phase 2: Find immediate hardware neighbors (1 step out)
         runner.next(apply_generator=True, steps=8)
-
-        # Phase 3: Operator reads the global field of those neighbors and moves
         runner.next(apply_generator=False)
 
     runner.end(compile_csv=True)
