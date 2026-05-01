@@ -17,9 +17,9 @@ FDS models multi-entity environments where discrete state transitions are govern
 1. [Visual Proof : Deterministic vs. Probabilistic Dynamics](#1-visual-proof--deterministic-vs-probabilistic-dynamics)
 2. [Interactive Demos: The Colab Environments](#2-interactive-demos-the-colab-environments)
 3. [FDS : Theory Overview](#3-field-dynamic-system-theory-overview)
-3. [Core Architecture & Philosophy](#4-the-dual-flow-architecture-domain-vs-kernel)
-4. [Quick Start / Code Example](#5-quick-start-running-the-engine-v09)
-5. [Roadmap: The FDSWrapper API](#-roadmap-the-fdswrapper-api-v10)
+4. [Core Architecture & Philosophy](#4-the-dual-flow-architecture-domain-vs-kernel)
+5. [Quick Start / Code Example](#5-quick-start-running-the-engine-v09)
+6. [Roadmap: The FDSWrapper API](#6-future-roadmap-the-developer-experience-v10)
 
 ## 1. Visual Proof : Deterministic vs. Probabilistic Dynamics
 
