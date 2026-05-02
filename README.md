@@ -266,12 +266,29 @@ for step in range(SIMULATION_STEPS):
 ```
 ## 6. Future Roadmap: The Developer Experience (v1.0+)
 
-Version 0.9 proves the hardware-level speed and mathematical flexibility of the FDS architecture. The focus for v1.0 and beyond is Developer Experience (DX)—abstracting the low-level memory management and expanding the engine's physical capabilities.
+Version 0.9 proves the hardware-level speed and mathematical flexibility of the FDS architecture. The focus for v1.0 and beyond is expanding physical capabilities, optimizing I/O, and enhancing Developer Experience (DX).
 
-*   **The FDSWrapper API:** A unified, top-level abstraction module that wraps both Classical and Field Dynamic Systems. Users will be able to define physics entirely in Python without manually managing `Data Contracts` or `Component Managers`.
-*   **The Ensemble Module (Multi-Entity Systems):** A specialized execution manager for simulating multiple entities with interacting or entirely different physics. The Ensemble will intelligently sort, group, and batch these distinct systems, translating them into unified hardware operations for massive parallel performance.
-*   **Next-Gen Kernels & JAX Integration:** Currently, users must write their own Numba JIT-decorated methods for custom utilities. Future versions will handle compilation internally and introduce support for **JAX**, unlocking native GPU tensor operations and auto-differentiation.
-*   **Dynamic Topology Auto-Scaling:** Eliminating the need to manually guess or hardcode memory caps. The engine will dynamically estimate max array sizes based on initial spatial boundaries and auto-configure the C-arrays.
-*   **Generic Field Algebras:** Upgrading the Field and Generator components to support swappable compositions and transformations. Users will be able to inject custom mathematical transformations into a single algebra dynamically, without rewriting the core propagation loops.
-*   **Optimized Topology Lookups:** Further refinement of the $O(1)$ spatial hashing and coordinate resolution to push bounding-box processing speeds even higher.
-*   *...and more performance enhancements as the core API solidifies.*
+
+*   **Automated Data Shape Handling**
+    Moves array formatting and C-alignment entirely internal. Users simply pass standard Python lists; the engine handles the memory constraints and reshaping automatically.
+
+*   **Saving Field Data for Fast I/O & Analysis**
+    Introduces disk caching to export "baked" global fields. This drastically reduces initialization time for repeated simulations on static topologies and allows users to analyze field outputs externally.
+
+*   **Unified Python API (`FDSWrapper`)**
+    A top-level wrapper allowing users to define physics purely in Python, bypassing manual management of `Data Contracts` or `Component Managers`.
+
+*   **Multi-Entity Execution (Ensemble Module)**
+    A manager that intelligently sorts, groups, and batches interacting systems into unified hardware operations for massive parallel execution.
+
+*   **GPU Acceleration via JAX**
+    Internalizes JIT compilation and adds support for **JAX**, unlocking native GPU tensor operations and auto-differentiation.
+
+*   **Dynamic Memory Auto-Scaling**
+    Eliminates manual memory caps by dynamically estimating array sizes from spatial boundaries and auto-configuring the C-arrays.
+
+*   **Swappable Math Transformations**
+    Upgrades the Field components to support generic algebras, allowing users to dynamically inject custom math without rewriting core propagation loops.
+
+*   **Enhanced Spatial Hashing**
+    Refines the $O(1)$ coordinate resolution to push bounding-box processing speeds even higher.
