@@ -11,6 +11,8 @@
 ## The Engine Framework
 FDS models multi-entity environments where discrete state transitions are governed by mathematical vector *fields*. By encoding transition probabilities into these dynamic fields, FDS allows researchers to seamlessly swap fundamental physics and interaction rules with minimal code friction. It provides the expressiveness of pure Python for system design, while compiling directly to LLVM machine code for uncompromised, hardware-level execution speed.
 
+It utilizes state **vector encoding** and stochastic modeling **(Random Walk)** to support both classical (Real field) and quantum (Complex field) system simulations seamlessly.
+
 ---
 
 ## 📖 Table of Contents
