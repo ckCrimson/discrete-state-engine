@@ -53,7 +53,7 @@ It utilizes state **vector encoding** and stochastic modeling **(Random Walk)** 
       <b>Engine Mechanics:</b> The Global Field maps non-uniform environmental weights (e.g., 2.0 on the left, 1.0 on the right). The Generator multiplies local Markov transitions by these global weights to create an asymmetric probability distribution. The Operator then stochastically samples this field, causing a calculated drift toward higher-weight regions.
     </td>
     <td valign="top">
-      <b>Engine Mechanics:</b> The field maps strict kinematic states (velocity/momentum vectors). The Generator calculates exact future trajectories based on momentum. The Operator handles all boundary logic (wall checks) and executes the positional updates deterministically. The discrete Topology component is bypassed entirely.
+      <b>Engine Mechanics:</b> The field maps strict kinematic states (velocity/momentum vectors). The Operator handles all boundary logic (wall checks) and executes the positional updates deterministically. This models a classical deterministic dynamic system
     </td>
   </tr>
 </table>
